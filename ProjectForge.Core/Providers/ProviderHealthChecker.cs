@@ -50,7 +50,8 @@ public sealed class ProviderHealthChecker : IProviderHealthChecker
                 .WaitAsync(_timeout, cancellationToken);
         }
         catch (OperationCanceledException)
-            when (!cancellationToken.IsCancellationRequested)
+            when (timeout.IsCancellationRequested &&
+                  !cancellationToken.IsCancellationRequested)
         {
             return TimedOut(provider, stopwatch.Elapsed);
         }

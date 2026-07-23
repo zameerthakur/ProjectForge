@@ -43,6 +43,18 @@ public sealed class ProviderHealthCheckerTests
     }
 
     [Fact]
+    public async Task DoesNotMisreportProviderCancellationAsTimeout()
+    {
+        var provider = Provider(
+            _ => Task.FromCanceled<ProviderHealthReport>(
+                new CancellationToken(canceled: true)));
+        var checker = new ProviderHealthChecker(TimeSpan.FromSeconds(10));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => checker.CheckHealthAsync(provider));
+    }
+
+    [Fact]
     public void RejectsNonPositiveTimeout()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
