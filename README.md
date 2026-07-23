@@ -47,6 +47,7 @@ design principles, and the planned vertical slice.
 - `ProjectForge.Core` contains provider registration and orchestration policy.
 - `ProjectForge.Application` contains approval-gated workflow coordination.
 - `ProjectForge.Infrastructure` contains SQLite-backed durable state.
+- `ProjectForge.Host` exposes the executable workflow HTTP API.
 - `ProjectForge.Core.Tests` and `ProjectForge.Application.Tests` contain
   behavior-focused automated verification.
 - `docs` contains the roadmap, architecture, and decision records.

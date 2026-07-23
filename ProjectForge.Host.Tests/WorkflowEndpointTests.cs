@@ -1,0 +1,239 @@
+using System.Text;
+using System.Text.Json;
+using ProjectForge.Abstractions.Capabilities;
+using ProjectForge.Application.Workflows;
+
+namespace ProjectForge.Host.Tests;
+
+public sealed class WorkflowEndpointTests
+{
+    [Fact]
+    public async Task HealthReturnsHealthyStatus()
+    {
+        using var host = new TestHost();
+
+        using var response = await host.Client.GetAsync("/health");
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStreamAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            "Healthy",
+            document.RootElement.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task CreateGetAndListReturnPersistedWorkflow()
+    {
+        using var host = new TestHost();
+
+        using var createResponse = await CreateWorkflowAsync(host.Client);
+        var created = await ReadWorkflowAsync(createResponse);
+
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        Assert.Equal(
+            $"/workflows/{created.Workflow.Id:D}",
+            createResponse.Headers.Location?.OriginalString);
+        Assert.Equal(WorkflowStatus.PendingApproval, created.Workflow.Status);
+        Assert.Equal("task-1", created.Workflow.Request.TaskId);
+
+        var fetched = await host.Client.GetFromJsonAsync<WorkflowSnapshot>(
+            $"/workflows/{created.Workflow.Id:D}");
+        var listed = await host.Client
+            .GetFromJsonAsync<WorkflowSnapshot[]>("/workflows");
+
+        Assert.NotNull(fetched);
+        Assert.Equal(created.Workflow.Id, fetched.Workflow.Id);
+        var onlyWorkflow = Assert.Single(Assert.IsType<WorkflowSnapshot[]>(listed));
+        Assert.Equal(created.Workflow.Id, onlyWorkflow.Workflow.Id);
+    }
+
+    [Theory]
+    [InlineData(ApprovalDecision.Approved, WorkflowStatus.Approved)]
+    [InlineData(ApprovalDecision.Rejected, WorkflowStatus.Rejected)]
+    public async Task RecordDecisionTransitionsPendingWorkflow(
+        ApprovalDecision decision,
+        WorkflowStatus expectedStatus)
+    {
+        using var host = new TestHost();
+        using var createResponse = await CreateWorkflowAsync(host.Client);
+        var created = await ReadWorkflowAsync(createResponse);
+
+        using var response = await host.Client.PostAsJsonAsync(
+            $"/workflows/{created.Workflow.Id:D}/decisions",
+            new
+            {
+                expectedVersion = created.Workflow.Version,
+                decision,
+                decidedBy = "integration-test"
+            });
+        var updated = await ReadWorkflowAsync(response);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(expectedStatus, updated.Workflow.Status);
+        Assert.Equal(created.Workflow.Version + 1, updated.Workflow.Version);
+        Assert.Equal(decision, updated.Approval?.Decision);
+        Assert.Equal("integration-test", updated.Approval?.DecidedBy);
+    }
+
+    [Fact]
+    public async Task RecordDecisionWithStaleVersionReturnsConflictProblem()
+    {
+        using var host = new TestHost();
+        using var createResponse = await CreateWorkflowAsync(host.Client);
+        var created = await ReadWorkflowAsync(createResponse);
+        var path = $"/workflows/{created.Workflow.Id:D}/decisions";
+
+        using var appliedResponse = await host.Client.PostAsJsonAsync(
+            path,
+            new
+            {
+                expectedVersion = created.Workflow.Version,
+                decision = ApprovalDecision.Approved,
+                decidedBy = "first-operator"
+            });
+        appliedResponse.EnsureSuccessStatusCode();
+
+        using var conflictResponse = await host.Client.PostAsJsonAsync(
+            path,
+            new
+            {
+                expectedVersion = created.Workflow.Version,
+                decision = ApprovalDecision.Rejected,
+                decidedBy = "stale-operator"
+            });
+        using var document = JsonDocument.Parse(
+            await conflictResponse.Content.ReadAsStreamAsync());
+
+        Assert.Equal(HttpStatusCode.Conflict, conflictResponse.StatusCode);
+        Assert.Equal(
+            "Workflow update conflict.",
+            document.RootElement.GetProperty("title").GetString());
+        var current = document.RootElement.GetProperty("current");
+        Assert.Equal(
+            (int)WorkflowStatus.Approved,
+            current.GetProperty("workflow").GetProperty("status").GetInt32());
+        Assert.Equal(
+            created.Workflow.Version + 1,
+            current.GetProperty("workflow").GetProperty("version").GetInt64());
+    }
+
+    [Fact]
+    public async Task CreateWithInvalidValuesReturnsValidationProblem()
+    {
+        using var host = new TestHost();
+
+        using var response = await host.Client.PostAsJsonAsync(
+            "/workflows",
+            new
+            {
+                taskId = " ",
+                taskName = "",
+                instruction = " ",
+                approvalPrompt = "",
+                capability = 0,
+                maximumEstimatedCost = -1
+            });
+        var problem = await response.Content
+            .ReadFromJsonAsync<ValidationProblemDetails>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.NotNull(problem);
+        Assert.Equal(6, problem.Errors.Count);
+        Assert.Contains("TaskId", problem.Errors.Keys);
+        Assert.Contains("Capability", problem.Errors.Keys);
+        Assert.Contains("MaximumEstimatedCost", problem.Errors.Keys);
+    }
+
+    [Fact]
+    public async Task RecordDecisionWithInvalidValuesReturnsValidationProblem()
+    {
+        using var host = new TestHost();
+
+        using var response = await host.Client.PostAsJsonAsync(
+            $"/workflows/{Guid.NewGuid():D}/decisions",
+            new
+            {
+                expectedVersion = 0,
+                decision = 0,
+                decidedBy = " "
+            });
+        var problem = await response.Content
+            .ReadFromJsonAsync<ValidationProblemDetails>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.NotNull(problem);
+        Assert.Equal(3, problem.Errors.Count);
+        Assert.Contains("ExpectedVersion", problem.Errors.Keys);
+        Assert.Contains("Decision", problem.Errors.Keys);
+        Assert.Contains("DecidedBy", problem.Errors.Keys);
+    }
+
+    [Fact]
+    public async Task CreateWithMalformedJsonReturnsBadRequestProblem()
+    {
+        using var host = new TestHost();
+        using var content = new StringContent(
+            """{"taskId":""",
+            Encoding.UTF8,
+            "application/json");
+
+        using var response = await host.Client.PostAsync(
+            "/workflows",
+            content);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.NotNull(problem);
+        Assert.Equal("Invalid request.", problem.Title);
+    }
+
+    [Fact]
+    public async Task MissingWorkflowReturnsNotFoundProblems()
+    {
+        using var host = new TestHost();
+        var workflowId = Guid.NewGuid();
+
+        using var getResponse = await host.Client.GetAsync(
+            $"/workflows/{workflowId:D}");
+        var getProblem = await getResponse.Content
+            .ReadFromJsonAsync<ProblemDetails>();
+
+        using var decisionResponse = await host.Client.PostAsJsonAsync(
+            $"/workflows/{workflowId:D}/decisions",
+            new
+            {
+                expectedVersion = 1,
+                decision = ApprovalDecision.Approved,
+                decidedBy = "integration-test"
+            });
+        var decisionProblem = await decisionResponse.Content
+            .ReadFromJsonAsync<ProblemDetails>();
+
+        Assert.Equal(HttpStatusCode.NotFound, getResponse.StatusCode);
+        Assert.Equal("Workflow not found.", getProblem?.Title);
+        Assert.Equal(HttpStatusCode.NotFound, decisionResponse.StatusCode);
+        Assert.Equal("Workflow not found.", decisionProblem?.Title);
+    }
+
+    private static Task<HttpResponseMessage> CreateWorkflowAsync(
+        HttpClient client) =>
+        client.PostAsJsonAsync(
+            "/workflows",
+            new
+            {
+                taskId = "task-1",
+                taskName = "Host integration test",
+                instruction = "Persist a workflow.",
+                approvalPrompt = "Approve this test workflow?",
+                capability = EngineeringCapability.Testing,
+                allowCloudExecution = false,
+                preferLocalExecution = true
+            });
+
+    private static async Task<WorkflowSnapshot> ReadWorkflowAsync(
+        HttpResponseMessage response) =>
+        await response.Content.ReadFromJsonAsync<WorkflowSnapshot>() ??
+        throw new InvalidOperationException(
+            "The response did not contain a workflow.");
+}

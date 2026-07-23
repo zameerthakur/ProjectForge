@@ -20,5 +20,7 @@ ProjectForge does not yet publish versioned releases.
   records optimistic human decisions through the workflow-store boundary.
 - SQLite workflow, approval, and audit persistence with transactional,
   version-checked decisions and restart recovery.
+- Executable HTTP host for creating, inspecting, approving, and rejecting
+  workflows with validated requests and stable error responses.
 - Public project overview, architecture documentation, roadmap, contribution
   workflow, and Architecture Decision Record process.

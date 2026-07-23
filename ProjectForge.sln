@@ -17,6 +17,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Infrastructure
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Infrastructure.Tests", "ProjectForge.Infrastructure.Tests\ProjectForge.Infrastructure.Tests.csproj", "{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Host", "ProjectForge.Host\ProjectForge.Host.csproj", "{0030118D-87A5-4601-A0F2-74993BB1C4A5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Host.Tests", "ProjectForge.Host.Tests\ProjectForge.Host.Tests.csproj", "{D0A998BC-CF0B-46CF-A36D-E135E4DB3483}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -51,6 +55,14 @@ Global
 		{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0030118D-87A5-4601-A0F2-74993BB1C4A5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0030118D-87A5-4601-A0F2-74993BB1C4A5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0030118D-87A5-4601-A0F2-74993BB1C4A5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0030118D-87A5-4601-A0F2-74993BB1C4A5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D0A998BC-CF0B-46CF-A36D-E135E4DB3483}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D0A998BC-CF0B-46CF-A36D-E135E4DB3483}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D0A998BC-CF0B-46CF-A36D-E135E4DB3483}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D0A998BC-CF0B-46CF-A36D-E135E4DB3483}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

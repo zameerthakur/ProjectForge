@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProjectForge.Application\ProjectForge.Application.csproj" />
+    <ProjectReference Include="..\ProjectForge.Infrastructure\ProjectForge.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
