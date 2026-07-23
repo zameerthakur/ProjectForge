@@ -95,14 +95,25 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
         CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
-        return await GetAsync(connection, workflowId, cancellationToken);
+        await using var transaction = (SqliteTransaction)
+            await connection.BeginTransactionAsync(cancellationToken);
+        var workflow = await GetAsync(
+            connection,
+            transaction,
+            workflowId,
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return workflow;
     }
 
     public async Task<IReadOnlyCollection<WorkflowSnapshot>> ListAsync(
         CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)
+            await connection.BeginTransactionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             "SELECT id FROM workflows ORDER BY updated_at_utc DESC, id;";
 
@@ -120,11 +131,16 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
         foreach (var id in ids)
         {
             workflows.Add(
-                await GetAsync(connection, id, cancellationToken) ??
+                await GetAsync(
+                    connection,
+                    transaction,
+                    id,
+                    cancellationToken) ??
                 throw new InvalidOperationException(
                     $"Workflow '{id}' disappeared while it was being listed."));
         }
 
+        await transaction.CommitAsync(cancellationToken);
         return workflows;
     }
 
@@ -171,7 +187,11 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
         {
             await transaction.RollbackAsync(cancellationToken);
             return NotApplied(
-                await GetAsync(connection, workflowId, cancellationToken));
+                await GetAsync(
+                    connection,
+                    transaction: null,
+                    workflowId,
+                    cancellationToken));
         }
 
         var approvalChanged = await ExecuteAsync(
@@ -216,7 +236,11 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
 
         await transaction.CommitAsync(cancellationToken);
         return Applied(
-            await GetAsync(connection, workflowId, cancellationToken));
+            await GetAsync(
+                connection,
+                transaction: null,
+                workflowId,
+                cancellationToken));
     }
 
     public async Task<WorkflowMutationResult> TryTransitionAsync(
@@ -261,7 +285,11 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
         {
             await transaction.RollbackAsync(cancellationToken);
             return NotApplied(
-                await GetAsync(connection, workflowId, cancellationToken));
+                await GetAsync(
+                    connection,
+                    transaction: null,
+                    workflowId,
+                    cancellationToken));
         }
 
         await InsertAuditAsync(
@@ -279,7 +307,11 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
 
         await transaction.CommitAsync(cancellationToken);
         return Applied(
-            await GetAsync(connection, workflowId, cancellationToken));
+            await GetAsync(
+                connection,
+                transaction: null,
+                workflowId,
+                cancellationToken));
     }
 
     private async Task<SqliteConnection> OpenAsync(
@@ -368,11 +400,13 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
 
     private static async Task<WorkflowSnapshot?> GetAsync(
         SqliteConnection connection,
+        SqliteTransaction? transaction,
         Guid workflowId,
         CancellationToken cancellationToken)
     {
         var workflow = await ReadWorkflowAsync(
             connection,
+            transaction,
             workflowId,
             cancellationToken);
         if (workflow is null)
@@ -385,10 +419,12 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
             Workflow = workflow,
             Approval = await ReadApprovalAsync(
                 connection,
+                transaction,
                 workflowId,
                 cancellationToken),
             AuditEvents = await ReadAuditAsync(
                 connection,
+                transaction,
                 workflowId,
                 cancellationToken)
         };
@@ -396,10 +432,12 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
 
     private static async Task<WorkflowRecord?> ReadWorkflowAsync(
         SqliteConnection connection,
+        SqliteTransaction? transaction,
         Guid workflowId,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             """
             SELECT request_json, status, version, created_at_utc,
@@ -433,10 +471,12 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
 
     private static async Task<ApprovalRecord?> ReadApprovalAsync(
         SqliteConnection connection,
+        SqliteTransaction? transaction,
         Guid workflowId,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             """
             SELECT id, prompt, decision, decided_by, requested_at_utc,
@@ -471,10 +511,12 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
     private static async Task<IReadOnlyCollection<WorkflowAuditEvent>>
         ReadAuditAsync(
             SqliteConnection connection,
+            SqliteTransaction? transaction,
             Guid workflowId,
             CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             """
             SELECT id, event_type, message, occurred_at_utc
