@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37301.10 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Abstractions", "ProjectForge.Abstractions\ProjectForge.Abstractions.csproj", "{DAF7597B-203C-4444-B1C5-7E8FCBFD851E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Core", "ProjectForge.Core\ProjectForge.Core.csproj", "{384BF8B1-7C24-4A14-B204-038F69B6241A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DAF7597B-203C-4444-B1C5-7E8FCBFD851E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DAF7597B-203C-4444-B1C5-7E8FCBFD851E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DAF7597B-203C-4444-B1C5-7E8FCBFD851E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DAF7597B-203C-4444-B1C5-7E8FCBFD851E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{384BF8B1-7C24-4A14-B204-038F69B6241A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{384BF8B1-7C24-4A14-B204-038F69B6241A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{384BF8B1-7C24-4A14-B204-038F69B6241A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{384BF8B1-7C24-4A14-B204-038F69B6241A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {68C7A699-3C80-4D7F-970A-14EC988FC675}
+	EndGlobalSection
+EndGlobal
