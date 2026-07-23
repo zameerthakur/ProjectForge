@@ -48,7 +48,7 @@ Acceptance criteria:
 
 ## M2 — Durable approval workflow
 
-Status: Planned
+Status: In progress
 
 Outcome: A workflow can pause for approval, restart, and resume exactly once.
 

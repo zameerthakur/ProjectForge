@@ -16,5 +16,7 @@ ProjectForge does not yet publish versioned releases.
 - Shared runtime-provisioning contracts and coordination boundaries with
   lifecycle reporting, verification, concurrency control, and retry recovery.
 - Automated tests for provider policy and runtime-provisioning coordination.
+- Application workflow coordination that durably creates pending approvals and
+  records optimistic human decisions through the workflow-store boundary.
 - Public project overview, architecture documentation, roadmap, contribution
   workflow, and Architecture Decision Record process.

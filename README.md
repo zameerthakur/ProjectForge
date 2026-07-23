@@ -45,10 +45,13 @@ design principles, and the planned vertical slice.
 
 - `ProjectForge.Abstractions` contains stable contracts and domain models.
 - `ProjectForge.Core` contains provider registration and orchestration policy.
+- `ProjectForge.Application` contains approval-gated workflow coordination.
+- `ProjectForge.Core.Tests` and `ProjectForge.Application.Tests` contain
+  behavior-focused automated verification.
 - `docs` contains the roadmap, architecture, and decision records.
 
-Additional application, infrastructure, provider, and test projects will be
-introduced only when required by a validated milestone.
+Infrastructure and concrete provider projects will be introduced only when
+required by a validated milestone.
 
 ## Prerequisites
 
