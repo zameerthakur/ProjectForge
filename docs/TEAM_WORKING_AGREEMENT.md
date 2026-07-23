@@ -99,6 +99,14 @@ restart recovery where applicable.
 - Commits must be atomic, coherent, tested, and reviewable.
 - Commit messages use Conventional Commits, such as `feat(scope): summary`,
   `fix(scope): summary`, `test(scope): summary`, or `docs(scope): summary`.
+- Subjects use natural, human-written, imperative language, remain concise,
+  and describe the observable change rather than the editing activity.
+- Non-trivial commits include a short human-readable body explaining why the
+  change is needed, the important design or behavior, and the verification
+  performed.
+- Commit messages avoid generated-sounding boilerplate, exhaustive file lists,
+  vague summaries, internal agent terminology, and claims not supported by
+  tests or other evidence.
 - Unrelated changes must never be bundled into the same commit.
 - Partial scaffolding, failing builds, generated output, local databases,
   secrets, and temporary files must not be committed.

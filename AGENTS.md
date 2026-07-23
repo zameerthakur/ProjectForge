@@ -7,6 +7,11 @@ All agents working in this repository must follow
 coordinates parallel work, integrates changes, runs final verification, and is
 the only agent permitted to stage or commit team changes.
 
+Commit subjects and descriptions must read naturally and follow established
+industry practice. Use a concise Conventional Commit subject and, for
+non-trivial changes, a short body that explains the reason for the change, the
+important behavior, and how it was verified.
+
 ## Zero-friction runtime provisioning
 
 ProjectForge must minimize manual setup for end users.
