@@ -70,6 +70,25 @@ public sealed class PolicyResourceSchedulerTests
                 ProviderRejectionCode.CloudExecutionNotAllowed);
     }
 
+    [Fact]
+    public async Task RejectsProviderThatDoesNotSupportRequestedCapability()
+    {
+        var provider = Provider(
+            "unsupported",
+            ProviderExecutionLocation.LocalProcess);
+        provider.SupportedCapabilities = [];
+
+        var exception = await Assert.ThrowsAsync<ProviderSelectionException>(
+            () => Scheduler(provider).SelectProviderWithEvidenceAsync(Request()));
+
+        var evaluation = Assert.Single(exception.Evaluations);
+        Assert.Contains(
+            evaluation.Rejections,
+            rejection =>
+                rejection.Code ==
+                ProviderRejectionCode.CapabilityNotSupported);
+    }
+
     [Theory]
     [InlineData(true, false, false, ProviderRejectionCode.RepositoryAccessNotSupported)]
     [InlineData(false, true, false, ProviderRejectionCode.FileWriteAccessNotSupported)]
@@ -162,6 +181,24 @@ public sealed class PolicyResourceSchedulerTests
                 rejection.Message.Contains(
                     "timed out",
                     StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task RejectsProviderThatCannotCurrentlyExecuteRequest()
+    {
+        var provider = Provider(
+            "busy",
+            ProviderExecutionLocation.LocalProcess);
+        provider.CanExecute = false;
+
+        var exception = await Assert.ThrowsAsync<ProviderSelectionException>(
+            () => Scheduler(provider).SelectProviderWithEvidenceAsync(Request()));
+
+        var evaluation = Assert.Single(exception.Evaluations);
+        Assert.Contains(
+            evaluation.Rejections,
+            rejection =>
+                rejection.Code == ProviderRejectionCode.ProviderUnavailable);
     }
 
     [Fact]

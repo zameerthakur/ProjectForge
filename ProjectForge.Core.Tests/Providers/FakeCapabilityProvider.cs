@@ -11,11 +11,11 @@ internal sealed class FakeCapabilityProvider : ISchedulableCapabilityProvider
     public required ProviderDescriptor Descriptor { get; init; }
 
     public IReadOnlyCollection<EngineeringCapability> SupportedCapabilities
-        { get; init; } = new[] { EngineeringCapability.Coding };
+        { get; set; } = new[] { EngineeringCapability.Coding };
 
     public bool IsHealthy { get; init; } = true;
 
-    public bool CanExecute { get; init; } = true;
+    public bool CanExecute { get; set; } = true;
 
     public decimal EstimatedCost { get; init; }
 
