@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Abstractions",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Core", "ProjectForge.Core\ProjectForge.Core.csproj", "{384BF8B1-7C24-4A14-B204-038F69B6241A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Application", "ProjectForge.Application\ProjectForge.Application.csproj", "{9EC5AD21-A68C-494F-BA87-E9E0D5B27A3B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{384BF8B1-7C24-4A14-B204-038F69B6241A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{384BF8B1-7C24-4A14-B204-038F69B6241A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{384BF8B1-7C24-4A14-B204-038F69B6241A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9EC5AD21-A68C-494F-BA87-E9E0D5B27A3B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9EC5AD21-A68C-494F-BA87-E9E0D5B27A3B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9EC5AD21-A68C-494F-BA87-E9E0D5B27A3B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9EC5AD21-A68C-494F-BA87-E9E0D5B27A3B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
