@@ -132,7 +132,36 @@ public sealed class PolicyResourceSchedulerTests
         Assert.Null(evaluation.EstimatedCost);
         Assert.Contains(
             evaluation.Rejections,
-            rejection => rejection.Code == ProviderRejectionCode.ProviderUnhealthy);
+            rejection =>
+                rejection.Code == ProviderRejectionCode.ProviderUnhealthy);
+    }
+
+    [Fact]
+    public async Task RejectsProviderWhenHealthCheckTimesOut()
+    {
+        var provider = Provider(
+            "slow",
+            ProviderExecutionLocation.LocalProcess);
+        provider.HealthCheck = async cancellationToken =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable.");
+        };
+        var scheduler = new PolicyResourceScheduler(
+            new ProviderRegistry([provider]),
+            new ProviderHealthChecker(TimeSpan.FromMilliseconds(50)));
+
+        var exception = await Assert.ThrowsAsync<ProviderSelectionException>(
+            () => scheduler.SelectProviderWithEvidenceAsync(Request()));
+
+        var evaluation = Assert.Single(exception.Evaluations);
+        Assert.Contains(
+            evaluation.Rejections,
+            rejection =>
+                rejection.Code == ProviderRejectionCode.ProviderUnhealthy &&
+                rejection.Message.Contains(
+                    "timed out",
+                    StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -159,6 +188,15 @@ public sealed class PolicyResourceSchedulerTests
                 .SelectProviderWithEvidenceAsync(
                     Request(),
                     cancellation.Token));
+    }
+
+    [Fact]
+    public async Task ReportsNoMatchWhenRegistryIsEmpty()
+    {
+        var exception = await Assert.ThrowsAsync<ProviderSelectionException>(
+            () => Scheduler().SelectProviderWithEvidenceAsync(Request()));
+
+        Assert.Empty(exception.Evaluations);
     }
 
     private static PolicyResourceScheduler Scheduler(

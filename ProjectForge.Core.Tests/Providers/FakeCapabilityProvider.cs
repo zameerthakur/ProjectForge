@@ -19,6 +19,9 @@ internal sealed class FakeCapabilityProvider : ISchedulableCapabilityProvider
 
     public decimal EstimatedCost { get; init; }
 
+    public Func<CancellationToken, Task<ProviderHealthReport>>? HealthCheck
+        { get; set; }
+
     public Task<bool> CanExecuteAsync(
         CapabilityExecutionRequest request,
         CancellationToken cancellationToken = default)
@@ -46,6 +49,11 @@ internal sealed class FakeCapabilityProvider : ISchedulableCapabilityProvider
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (HealthCheck is not null)
+        {
+            return HealthCheck(cancellationToken);
+        }
 
         return Task.FromResult(
             new ProviderHealthReport

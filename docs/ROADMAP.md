@@ -7,9 +7,10 @@ verified.
 ## Current state
 
 ProjectForge has an initial .NET solution with capability-oriented provider
-contracts and a simple provider registry and scheduler. There is not yet an
-executable host, persisted workflow, provider integration, dashboard, or
-automated test suite.
+contracts, deterministic provider selection, bounded health checks, shared
+runtime-provisioning boundaries, and an automated test suite. There is not yet
+an executable host, persisted workflow, concrete provider integration, or
+dashboard.
 
 ## M0 — Repository foundation
 
@@ -24,25 +25,26 @@ Acceptance criteria:
 - [x] Living roadmap and architecture overview exist.
 - [x] Contribution and milestone check-in standards are documented.
 - [x] Initial architecture decision is recorded.
-- [ ] Solution builds from a clean restore.
+- [x] Solution builds from a clean restore.
 - [ ] Foundation is checked into Git and synchronized to GitHub.
 
 ## M1 — Provider selection policy
 
-Status: Planned
+Status: In progress
 
 Outcome: ProjectForge deterministically selects the best eligible provider and
 explains the decision.
 
 Acceptance criteria:
 
-- Provider metadata represents locality, execution features, and estimated cost.
-- Mandatory constraints eliminate ineligible providers.
-- Ranking applies explicit, testable policy after eligibility.
-- Health checks use one coherent abstraction with cancellation and timeouts.
-- Selection returns decision evidence, not only the chosen provider.
-- Unit tests cover local preference, cloud prohibition, cost limits, unhealthy
-  providers, ties, cancellation, and no-match behavior.
+- [x] Provider metadata represents locality, execution features, and estimated
+  cost.
+- [x] Mandatory constraints eliminate ineligible providers.
+- [x] Ranking applies explicit, testable policy after eligibility.
+- [x] Health checks use one coherent abstraction with cancellation and timeouts.
+- [x] Selection returns decision evidence, not only the chosen provider.
+- [x] Unit tests cover local preference, cloud prohibition, cost limits,
+  unhealthy providers, ties, cancellation, and no-match behavior.
 
 ## M2 — Durable approval workflow
 

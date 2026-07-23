@@ -63,7 +63,11 @@ dotnet restore
 dotnet build --no-restore
 ```
 
-Automated tests will be added with the first behavior-focused milestone.
+Run the automated tests with:
+
+```shell
+dotnet test --no-restore
+```
 
 ## Development approach
 
