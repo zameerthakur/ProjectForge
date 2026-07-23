@@ -1,5 +1,12 @@
 # ProjectForge Repository Instructions
 
+## Team working agreement
+
+All agents working in this repository must follow
+`docs/TEAM_WORKING_AGREEMENT.md`. The manager assigns file ownership,
+coordinates parallel work, integrates changes, runs final verification, and is
+the only agent permitted to stage or commit team changes.
+
 ## Zero-friction runtime provisioning
 
 ProjectForge must minimize manual setup for end users.
