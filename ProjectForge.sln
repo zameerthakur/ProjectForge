@@ -13,6 +13,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Core.Tests", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Application.Tests", "ProjectForge.Application.Tests\ProjectForge.Application.Tests.csproj", "{A5A025CC-F219-4D96-BBBE-037BC8C97FEF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Infrastructure", "ProjectForge.Infrastructure\ProjectForge.Infrastructure.csproj", "{23AC5A41-099F-4553-AF9E-D86C793CD8E3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProjectForge.Infrastructure.Tests", "ProjectForge.Infrastructure.Tests\ProjectForge.Infrastructure.Tests.csproj", "{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,6 +43,14 @@ Global
 		{A5A025CC-F219-4D96-BBBE-037BC8C97FEF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A5A025CC-F219-4D96-BBBE-037BC8C97FEF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A5A025CC-F219-4D96-BBBE-037BC8C97FEF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{23AC5A41-099F-4553-AF9E-D86C793CD8E3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{23AC5A41-099F-4553-AF9E-D86C793CD8E3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{23AC5A41-099F-4553-AF9E-D86C793CD8E3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{23AC5A41-099F-4553-AF9E-D86C793CD8E3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1B874949-D71C-40E8-8FAA-EDB0665F0D9F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

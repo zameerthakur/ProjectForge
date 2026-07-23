@@ -56,8 +56,8 @@ Acceptance criteria:
 
 - An executable worker/API host composes the application.
 - Microsoft Agent Framework workflow behavior is validated in an isolated spike.
-- Workflow and approval state persist in SQLite.
-- A pending approval survives process termination.
+- [x] Workflow and approval state persist in SQLite.
+- [x] A pending approval survives process termination.
 - Resumption is idempotent and produces an audit trail.
 
 ## M3 — First real execution provider

@@ -18,5 +18,7 @@ ProjectForge does not yet publish versioned releases.
 - Automated tests for provider policy and runtime-provisioning coordination.
 - Application workflow coordination that durably creates pending approvals and
   records optimistic human decisions through the workflow-store boundary.
+- SQLite workflow, approval, and audit persistence with transactional,
+  version-checked decisions and restart recovery.
 - Public project overview, architecture documentation, roadmap, contribution
   workflow, and Architecture Decision Record process.
