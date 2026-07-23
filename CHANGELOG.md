@@ -22,5 +22,7 @@ ProjectForge does not yet publish versioned releases.
   version-checked decisions and restart recovery.
 - Executable HTTP host for creating, inspecting, approving, and rejecting
   workflows with validated requests and stable error responses.
+- Isolated Microsoft Agent Framework validation for typed graphs,
+  human-in-the-loop requests, and checkpoint rehydration.
 - Public project overview, architecture documentation, roadmap, contribution
   workflow, and Architecture Decision Record process.
