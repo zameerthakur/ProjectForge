@@ -482,6 +482,33 @@ public sealed class WorkflowExecutionServiceTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
+        public Task<WorkflowMutationResult> TryStartExecutionAsync(
+            Guid workflowId,
+            long expectedVersion,
+            WorkflowProviderSelectionEvidence providerSelection,
+            DateTimeOffset startedAtUtc,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<WorkflowMutationResult> TryCompleteExecutionAsync(
+            Guid workflowId,
+            long expectedVersion,
+            WorkflowStatus terminalStatus,
+            WorkflowExecutionEvidence execution,
+            WorkflowArtifactPaths? artifacts,
+            string auditEventType,
+            string auditMessage,
+            DateTimeOffset occurredAtUtc,
+            string? failureMessage = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<int> ReconcileInterruptedExecutionsAsync(
+            DateTimeOffset detectedAtUtc,
+            string reason,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public Task<WorkflowMutationResult> TryTransitionAsync(
             Guid workflowId,
             long expectedVersion,

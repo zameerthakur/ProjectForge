@@ -56,4 +56,41 @@ public interface IWorkflowStore
         DateTimeOffset occurredAtUtc,
         string? failureMessage = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Claims a queued workflow for execution and atomically records the
+    /// provider-selection evidence.
+    /// </summary>
+    Task<WorkflowMutationResult> TryStartExecutionAsync(
+        Guid workflowId,
+        long expectedVersion,
+        WorkflowProviderSelectionEvidence providerSelection,
+        DateTimeOffset startedAtUtc,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Completes a running workflow and atomically records its normalized
+    /// execution outcome, artifact paths, and audit event.
+    /// </summary>
+    Task<WorkflowMutationResult> TryCompleteExecutionAsync(
+        Guid workflowId,
+        long expectedVersion,
+        WorkflowStatus terminalStatus,
+        WorkflowExecutionEvidence execution,
+        WorkflowArtifactPaths? artifacts,
+        string auditEventType,
+        string auditMessage,
+        DateTimeOffset occurredAtUtc,
+        string? failureMessage = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Moves executions left running by a prior process lifetime into an
+    /// explicit reconciliation state without replaying provider work.
+    /// </summary>
+    /// <returns>The number of workflows marked for reconciliation.</returns>
+    Task<int> ReconcileInterruptedExecutionsAsync(
+        DateTimeOffset detectedAtUtc,
+        string reason,
+        CancellationToken cancellationToken = default);
 }

@@ -20,4 +20,25 @@ public sealed class WorkflowSnapshot
     /// </summary>
     public IReadOnlyCollection<WorkflowAuditEvent> AuditEvents { get; init; }
         = Array.Empty<WorkflowAuditEvent>();
+
+    /// <summary>
+    /// Gets durable evidence for the provider-selection decision.
+    /// </summary>
+    public WorkflowProviderSelectionEvidence? ProviderSelection { get; init; }
+
+    /// <summary>
+    /// Gets the normalized provider execution outcome.
+    /// </summary>
+    public WorkflowExecutionEvidence? Execution { get; init; }
+
+    /// <summary>
+    /// Gets the paths of artifacts published for successful execution.
+    /// </summary>
+    public WorkflowArtifactPaths? Artifacts { get; init; }
+
+    /// <summary>
+    /// Gets metadata describing an execution interrupted across process
+    /// lifetime boundaries.
+    /// </summary>
+    public WorkflowRecoveryMetadata? Recovery { get; init; }
 }

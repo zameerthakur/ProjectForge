@@ -38,5 +38,11 @@ public enum WorkflowStatus
     /// <summary>
     /// A human rejected the workflow.
     /// </summary>
-    Rejected = 7
+    Rejected = 7,
+
+    /// <summary>
+    /// Execution was interrupted and requires operator reconciliation before
+    /// any further provider work can be attempted.
+    /// </summary>
+    ReconciliationRequired = 8
 }

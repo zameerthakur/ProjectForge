@@ -54,9 +54,11 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
             """
             INSERT INTO workflows (
                 id, request_json, status, version, created_at_utc,
-                updated_at_utc, failure_message)
+                updated_at_utc, failure_message, provider_selection_json,
+                execution_json, artifacts_json, recovery_json)
             VALUES (
-                $id, $request, $status, $version, $created, $updated, $failure);
+                $id, $request, $status, $version, $created, $updated, $failure,
+                $selection, $execution, $artifacts, $recovery);
             """,
             cancellationToken,
             ("$id", workflow.Workflow.Id.ToString("D")),
@@ -67,7 +69,11 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
             ("$version", workflow.Workflow.Version),
             ("$created", Format(workflow.Workflow.CreatedAtUtc)),
             ("$updated", Format(workflow.Workflow.UpdatedAtUtc)),
-            ("$failure", workflow.Workflow.FailureMessage));
+            ("$failure", workflow.Workflow.FailureMessage),
+            ("$selection", Serialize(workflow.ProviderSelection)),
+            ("$execution", Serialize(workflow.Execution)),
+            ("$artifacts", Serialize(workflow.Artifacts)),
+            ("$recovery", Serialize(workflow.Recovery)));
 
         if (workflow.Approval is not null)
         {
@@ -314,6 +320,263 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
                 cancellationToken));
     }
 
+    public async Task<WorkflowMutationResult> TryStartExecutionAsync(
+        Guid workflowId,
+        long expectedVersion,
+        WorkflowProviderSelectionEvidence providerSelection,
+        DateTimeOffset startedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProviderSelection(providerSelection);
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)
+            await connection.BeginTransactionAsync(cancellationToken);
+        var changed = await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            UPDATE workflows
+            SET status = $running,
+                version = version + 1,
+                updated_at_utc = $started,
+                failure_message = NULL,
+                provider_selection_json = $selection,
+                execution_json = NULL,
+                artifacts_json = NULL,
+                recovery_json = NULL
+            WHERE id = $id
+              AND version = $version
+              AND status = $queued;
+            """,
+            cancellationToken,
+            ("$running", (int)WorkflowStatus.Running),
+            ("$started", Format(startedAtUtc)),
+            ("$selection", Serialize(providerSelection)),
+            ("$id", workflowId.ToString("D")),
+            ("$version", expectedVersion),
+            ("$queued", (int)WorkflowStatus.Queued));
+
+        if (changed == 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return NotApplied(
+                await GetAsync(
+                    connection,
+                    transaction: null,
+                    workflowId,
+                    cancellationToken));
+        }
+
+        await InsertAuditAsync(
+            connection,
+            transaction,
+            new WorkflowAuditEvent
+            {
+                Id = Guid.NewGuid(),
+                WorkflowId = workflowId,
+                EventType = "workflow.execution-started",
+                Message =
+                    $"Provider '{providerSelection.SelectedProviderName}' " +
+                    "claimed the workflow for execution.",
+                OccurredAtUtc = startedAtUtc
+            },
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return Applied(
+            await GetAsync(
+                connection,
+                transaction: null,
+                workflowId,
+                cancellationToken));
+    }
+
+    public async Task<WorkflowMutationResult> TryCompleteExecutionAsync(
+        Guid workflowId,
+        long expectedVersion,
+        WorkflowStatus terminalStatus,
+        WorkflowExecutionEvidence execution,
+        WorkflowArtifactPaths? artifacts,
+        string auditEventType,
+        string auditMessage,
+        DateTimeOffset occurredAtUtc,
+        string? failureMessage = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateCompletion(
+            terminalStatus,
+            execution,
+            artifacts,
+            auditEventType,
+            auditMessage);
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)
+            await connection.BeginTransactionAsync(cancellationToken);
+        var changed = await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            UPDATE workflows
+            SET status = $terminal_status,
+                version = version + 1,
+                updated_at_utc = $occurred,
+                failure_message = $failure,
+                execution_json = $execution,
+                artifacts_json = $artifacts
+            WHERE id = $id
+              AND version = $version
+              AND status = $running;
+            """,
+            cancellationToken,
+            ("$terminal_status", (int)terminalStatus),
+            ("$occurred", Format(occurredAtUtc)),
+            ("$failure", failureMessage),
+            ("$execution", Serialize(execution)),
+            ("$artifacts", Serialize(artifacts)),
+            ("$id", workflowId.ToString("D")),
+            ("$version", expectedVersion),
+            ("$running", (int)WorkflowStatus.Running));
+
+        if (changed == 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return NotApplied(
+                await GetAsync(
+                    connection,
+                    transaction: null,
+                    workflowId,
+                    cancellationToken));
+        }
+
+        var current = await GetAsync(
+            connection,
+            transaction,
+            workflowId,
+            cancellationToken) ??
+            throw new InvalidOperationException(
+                $"Workflow '{workflowId}' disappeared during completion.");
+        ValidateExecutionCorrelation(current, execution);
+
+        await InsertAuditAsync(
+            connection,
+            transaction,
+            new WorkflowAuditEvent
+            {
+                Id = Guid.NewGuid(),
+                WorkflowId = workflowId,
+                EventType = auditEventType,
+                Message = auditMessage,
+                OccurredAtUtc = occurredAtUtc
+            },
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return Applied(
+            await GetAsync(
+                connection,
+                transaction: null,
+                workflowId,
+                cancellationToken));
+    }
+
+    public async Task<int> ReconcileInterruptedExecutionsAsync(
+        DateTimeOffset detectedAtUtc,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)
+            await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            SELECT id, version, updated_at_utc
+            FROM workflows
+            WHERE status = $running
+            ORDER BY id;
+            """;
+        command.Parameters.AddWithValue(
+            "$running",
+            (int)WorkflowStatus.Running);
+
+        var interrupted = new List<(Guid Id, long Version, DateTimeOffset At)>();
+        await using (var reader = await command.ExecuteReaderAsync(
+                         cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                interrupted.Add(
+                    (
+                        Guid.Parse(reader.GetString(0)),
+                        reader.GetInt64(1),
+                        Parse(reader.GetString(2))));
+            }
+        }
+
+        var reconciled = 0;
+        foreach (var item in interrupted)
+        {
+            var recovery = new WorkflowRecoveryMetadata
+            {
+                InterruptedStatus = WorkflowStatus.Running,
+                InterruptedAtUtc = item.At,
+                DetectedAtUtc = detectedAtUtc,
+                Reason = reason
+            };
+            var changed = await ExecuteAsync(
+                connection,
+                transaction,
+                """
+                UPDATE workflows
+                SET status = $reconciliation_required,
+                    version = version + 1,
+                    updated_at_utc = $detected,
+                    failure_message = $reason,
+                    recovery_json = $recovery
+                WHERE id = $id
+                  AND version = $version
+                  AND status = $running;
+                """,
+                cancellationToken,
+                (
+                    "$reconciliation_required",
+                    (int)WorkflowStatus.ReconciliationRequired),
+                ("$detected", Format(detectedAtUtc)),
+                ("$reason", reason),
+                ("$recovery", Serialize(recovery)),
+                ("$id", item.Id.ToString("D")),
+                ("$version", item.Version),
+                ("$running", (int)WorkflowStatus.Running));
+
+            if (changed == 0)
+            {
+                continue;
+            }
+
+            await InsertAuditAsync(
+                connection,
+                transaction,
+                new WorkflowAuditEvent
+                {
+                    Id = Guid.NewGuid(),
+                    WorkflowId = item.Id,
+                    EventType = "workflow.execution-interrupted",
+                    Message = reason,
+                    OccurredAtUtc = detectedAtUtc
+                },
+                cancellationToken);
+            reconciled++;
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return reconciled;
+    }
+
     private async Task<SqliteConnection> OpenAsync(
         CancellationToken cancellationToken)
     {
@@ -344,7 +607,10 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
             await using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
             await SetForeignKeysAsync(connection, cancellationToken);
+            await using var transaction = (SqliteTransaction)
+                await connection.BeginTransactionAsync(cancellationToken);
             await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText =
                 """
                 CREATE TABLE IF NOT EXISTS workflows (
@@ -354,7 +620,11 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
                     version INTEGER NOT NULL,
                     created_at_utc TEXT NOT NULL,
                     updated_at_utc TEXT NOT NULL,
-                    failure_message TEXT NULL
+                    failure_message TEXT NULL,
+                    provider_selection_json TEXT NULL,
+                    execution_json TEXT NULL,
+                    artifacts_json TEXT NULL,
+                    recovery_json TEXT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS approvals (
@@ -381,6 +651,33 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
                     ON audit_events(workflow_id, occurred_at_utc, id);
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken);
+
+            await EnsureWorkflowColumnAsync(
+                connection,
+                transaction,
+                "provider_selection_json",
+                "TEXT NULL",
+                cancellationToken);
+            await EnsureWorkflowColumnAsync(
+                connection,
+                transaction,
+                "execution_json",
+                "TEXT NULL",
+                cancellationToken);
+            await EnsureWorkflowColumnAsync(
+                connection,
+                transaction,
+                "artifacts_json",
+                "TEXT NULL",
+                cancellationToken);
+            await EnsureWorkflowColumnAsync(
+                connection,
+                transaction,
+                "recovery_json",
+                "TEXT NULL",
+                cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
             _initialized = true;
         }
         finally
@@ -426,6 +723,31 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
                 connection,
                 transaction,
                 workflowId,
+                cancellationToken),
+            ProviderSelection =
+                await ReadJsonColumnAsync<WorkflowProviderSelectionEvidence>(
+                    connection,
+                    transaction,
+                    workflowId,
+                    "provider_selection_json",
+                    cancellationToken),
+            Execution = await ReadJsonColumnAsync<WorkflowExecutionEvidence>(
+                connection,
+                transaction,
+                workflowId,
+                "execution_json",
+                cancellationToken),
+            Artifacts = await ReadJsonColumnAsync<WorkflowArtifactPaths>(
+                connection,
+                transaction,
+                workflowId,
+                "artifacts_json",
+                cancellationToken),
+            Recovery = await ReadJsonColumnAsync<WorkflowRecoveryMetadata>(
+                connection,
+                transaction,
+                workflowId,
+                "recovery_json",
                 cancellationToken)
         };
     }
@@ -545,6 +867,71 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
         return events;
     }
 
+    private static async Task<T?> ReadJsonColumnAsync<T>(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        Guid workflowId,
+        string columnName,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            $"SELECT {columnName} FROM workflows WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", workflowId.ToString("D"));
+
+        var serialized = await command.ExecuteScalarAsync(cancellationToken);
+        if (serialized is null or DBNull)
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<T>((string)serialized, JsonOptions) ??
+            throw new InvalidOperationException(
+                $"Workflow '{workflowId}' has invalid {columnName} evidence.");
+    }
+
+    private static async Task EnsureWorkflowColumnAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string columnName,
+        string definition,
+        CancellationToken cancellationToken)
+    {
+        await using var inspect = connection.CreateCommand();
+        inspect.Transaction = transaction;
+        inspect.CommandText = "PRAGMA table_info(workflows);";
+
+        var exists = false;
+        await using (var reader = await inspect.ExecuteReaderAsync(
+                         cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (string.Equals(
+                        reader.GetString(1),
+                        columnName,
+                        StringComparison.Ordinal))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+
+        if (exists)
+        {
+            return;
+        }
+
+        await using var migrate = connection.CreateCommand();
+        migrate.Transaction = transaction;
+        migrate.CommandText =
+            $"ALTER TABLE workflows ADD COLUMN {columnName} {definition};";
+        await migrate.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static Task<int> InsertApprovalAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -631,6 +1018,155 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
             Current = current ??
                 throw new KeyNotFoundException("The workflow does not exist.")
         };
+
+    private static string? Serialize<T>(T? value)
+        where T : class =>
+        value is null ? null : JsonSerializer.Serialize(value, JsonOptions);
+
+    private static void ValidateProviderSelection(
+        WorkflowProviderSelectionEvidence providerSelection)
+    {
+        ArgumentNullException.ThrowIfNull(providerSelection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            providerSelection.SelectedProviderName);
+        if (providerSelection.EstimatedCost < decimal.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(providerSelection),
+                providerSelection.EstimatedCost,
+                "The selected provider cost cannot be negative.");
+        }
+
+        foreach (var candidate in providerSelection.Candidates)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(candidate.ProviderName);
+            if (candidate.EstimatedCost < decimal.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(providerSelection),
+                    candidate.EstimatedCost,
+                    "A candidate provider cost cannot be negative.");
+            }
+
+            foreach (var rejection in candidate.Rejections)
+            {
+                if (!Enum.IsDefined(rejection.Code))
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(providerSelection),
+                        rejection.Code,
+                        "A provider rejection code is invalid.");
+                }
+
+                ArgumentException.ThrowIfNullOrWhiteSpace(rejection.Message);
+            }
+        }
+    }
+
+    private static void ValidateCompletion(
+        WorkflowStatus terminalStatus,
+        WorkflowExecutionEvidence execution,
+        WorkflowArtifactPaths? artifacts,
+        string auditEventType,
+        string auditMessage)
+    {
+        ArgumentNullException.ThrowIfNull(execution);
+        ArgumentException.ThrowIfNullOrWhiteSpace(execution.ProviderName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(auditEventType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(auditMessage);
+
+        if (execution.RequestId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "Execution evidence must identify its request.",
+                nameof(execution));
+        }
+
+        if (!Enum.IsDefined(execution.Outcome))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(execution),
+                execution.Outcome,
+                "The execution outcome is invalid.");
+        }
+
+        if (execution.CompletedAtUtc < execution.StartedAtUtc)
+        {
+            throw new ArgumentException(
+                "Execution cannot complete before it starts.",
+                nameof(execution));
+        }
+
+        if (execution.EstimatedCost < decimal.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(execution),
+                execution.EstimatedCost,
+                "The execution cost cannot be negative.");
+        }
+
+        if (terminalStatus == WorkflowStatus.Succeeded)
+        {
+            if (execution.Outcome != WorkflowExecutionOutcome.Succeeded)
+            {
+                throw new ArgumentException(
+                    "A successful workflow requires successful execution " +
+                    "evidence.",
+                    nameof(execution));
+            }
+
+            ArgumentNullException.ThrowIfNull(artifacts);
+            ArgumentException.ThrowIfNullOrWhiteSpace(artifacts.MarkdownPath);
+            ArgumentException.ThrowIfNullOrWhiteSpace(artifacts.JsonPath);
+            return;
+        }
+
+        if (terminalStatus != WorkflowStatus.Failed)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(terminalStatus),
+                terminalStatus,
+                "Execution can only complete in a succeeded or failed state.");
+        }
+
+        if (execution.Outcome == WorkflowExecutionOutcome.Succeeded)
+        {
+            throw new ArgumentException(
+                "A failed workflow cannot contain successful execution " +
+                "evidence.",
+                nameof(execution));
+        }
+
+        if (artifacts is not null)
+        {
+            throw new ArgumentException(
+                "Artifacts are only supported for successful execution.",
+                nameof(artifacts));
+        }
+    }
+
+    private static void ValidateExecutionCorrelation(
+        WorkflowSnapshot current,
+        WorkflowExecutionEvidence execution)
+    {
+        if (current.Workflow.Request.RequestId != execution.RequestId)
+        {
+            throw new ArgumentException(
+                "Execution evidence does not match the workflow request.",
+                nameof(execution));
+        }
+
+        if (current.ProviderSelection is null ||
+            !string.Equals(
+                current.ProviderSelection.SelectedProviderName,
+                execution.ProviderName,
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "Execution evidence does not match the selected provider.",
+                nameof(execution));
+        }
+    }
 
     private static string Format(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);

@@ -1,4 +1,6 @@
+using Microsoft.Data.Sqlite;
 using ProjectForge.Abstractions.Capabilities;
+using ProjectForge.Abstractions.Providers;
 using ProjectForge.Application.Workflows;
 using ProjectForge.Infrastructure.Workflows;
 
@@ -154,6 +156,225 @@ public sealed class SqliteWorkflowStoreTests : IDisposable
             workflows.Select(item => item.Workflow.Id));
     }
 
+    [Fact]
+    public async Task ExecutionEvidenceAndArtifactsSurviveStoreRestart()
+    {
+        var snapshot = Snapshot();
+        var databasePath = DatabasePath();
+        var selection = ProviderSelection();
+        var artifacts = ArtifactPaths();
+        using (var initialStore = new SqliteWorkflowStore(databasePath))
+        {
+            await initialStore.CreateAsync(snapshot);
+            var queued = await initialStore.TryTransitionAsync(
+                snapshot.Workflow.Id,
+                snapshot.Workflow.Version,
+                WorkflowStatus.PendingApproval,
+                WorkflowStatus.Queued,
+                "workflow.execution-queued",
+                "Workflow queued.",
+                CreatedAt.AddMinutes(1));
+            var running = await initialStore.TryStartExecutionAsync(
+                snapshot.Workflow.Id,
+                queued.Current.Workflow.Version,
+                selection,
+                CreatedAt.AddMinutes(2));
+            var execution = SuccessfulExecution(
+                snapshot.Workflow.Request.RequestId);
+
+            var completed = await initialStore.TryCompleteExecutionAsync(
+                snapshot.Workflow.Id,
+                running.Current.Workflow.Version,
+                WorkflowStatus.Succeeded,
+                execution,
+                artifacts,
+                "workflow.execution-succeeded",
+                "Provider completed execution.",
+                CreatedAt.AddMinutes(4));
+
+            Assert.True(completed.WasApplied);
+        }
+
+        using var restartedStore = new SqliteWorkflowStore(databasePath);
+        var restored = await restartedStore.GetAsync(snapshot.Workflow.Id);
+
+        Assert.NotNull(restored);
+        Assert.Equal(WorkflowStatus.Succeeded, restored.Workflow.Status);
+        Assert.Equal(
+            selection.SelectedProviderName,
+            restored.ProviderSelection!.SelectedProviderName);
+        Assert.Equal(2, restored.ProviderSelection.Candidates.Count);
+        Assert.Equal(
+            WorkflowExecutionOutcome.Succeeded,
+            restored.Execution!.Outcome);
+        Assert.Equal(
+            snapshot.Workflow.Request.RequestId,
+            restored.Execution.RequestId);
+        Assert.Equal(artifacts.MarkdownPath, restored.Artifacts!.MarkdownPath);
+        Assert.Equal(artifacts.JsonPath, restored.Artifacts.JsonPath);
+        Assert.Equal(4, restored.AuditEvents.Count);
+    }
+
+    [Fact]
+    public async Task ConcurrentExecutionClaimIsAppliedOnceWithWinnerEvidence()
+    {
+        var snapshot = Snapshot();
+        var databasePath = DatabasePath();
+        using var firstStore = new SqliteWorkflowStore(databasePath);
+        using var secondStore = new SqliteWorkflowStore(databasePath);
+        await firstStore.CreateAsync(snapshot);
+        var queued = await firstStore.TryTransitionAsync(
+            snapshot.Workflow.Id,
+            snapshot.Workflow.Version,
+            WorkflowStatus.PendingApproval,
+            WorkflowStatus.Queued,
+            "workflow.execution-queued",
+            "Workflow queued.",
+            CreatedAt.AddMinutes(1));
+        var version = queued.Current.Workflow.Version;
+
+        var attempts = await Task.WhenAll(
+            firstStore.TryStartExecutionAsync(
+                snapshot.Workflow.Id,
+                version,
+                ProviderSelection("first-provider"),
+                CreatedAt.AddMinutes(2)),
+            secondStore.TryStartExecutionAsync(
+                snapshot.Workflow.Id,
+                version,
+                ProviderSelection("second-provider"),
+                CreatedAt.AddMinutes(2)));
+
+        var winner = Assert.Single(attempts, result => result.WasApplied);
+        var loser = Assert.Single(attempts, result => !result.WasApplied);
+        Assert.Equal(WorkflowStatus.Running, loser.Current.Workflow.Status);
+        Assert.Equal(
+            winner.Current.ProviderSelection!.SelectedProviderName,
+            loser.Current.ProviderSelection!.SelectedProviderName);
+        Assert.Equal(3, loser.Current.AuditEvents.Count);
+    }
+
+    [Fact]
+    public async Task InterruptedExecutionRequiresExplicitReconciliation()
+    {
+        var snapshot = Snapshot();
+        var databasePath = DatabasePath();
+        using (var initialStore = new SqliteWorkflowStore(databasePath))
+        {
+            await initialStore.CreateAsync(snapshot);
+            var queued = await initialStore.TryTransitionAsync(
+                snapshot.Workflow.Id,
+                snapshot.Workflow.Version,
+                WorkflowStatus.PendingApproval,
+                WorkflowStatus.Queued,
+                "workflow.execution-queued",
+                "Workflow queued.",
+                CreatedAt.AddMinutes(1));
+            await initialStore.TryStartExecutionAsync(
+                snapshot.Workflow.Id,
+                queued.Current.Workflow.Version,
+                ProviderSelection(),
+                CreatedAt.AddMinutes(2));
+        }
+
+        using var restartedStore = new SqliteWorkflowStore(databasePath);
+        var beforeRecovery =
+            await restartedStore.GetAsync(snapshot.Workflow.Id);
+        Assert.Equal(WorkflowStatus.Running, beforeRecovery!.Workflow.Status);
+
+        const string reason =
+            "The prior host stopped while provider execution was running.";
+        var reconciled =
+            await restartedStore.ReconcileInterruptedExecutionsAsync(
+                CreatedAt.AddMinutes(5),
+                reason);
+        var repeated =
+            await restartedStore.ReconcileInterruptedExecutionsAsync(
+                CreatedAt.AddMinutes(6),
+                reason);
+        var recovered = await restartedStore.GetAsync(snapshot.Workflow.Id);
+
+        Assert.Equal(1, reconciled);
+        Assert.Equal(0, repeated);
+        Assert.NotNull(recovered);
+        Assert.Equal(
+            WorkflowStatus.ReconciliationRequired,
+            recovered.Workflow.Status);
+        Assert.Equal(reason, recovered.Workflow.FailureMessage);
+        Assert.Equal(
+            WorkflowStatus.Running,
+            recovered.Recovery!.InterruptedStatus);
+        Assert.Equal(
+            CreatedAt.AddMinutes(2),
+            recovered.Recovery.InterruptedAtUtc);
+        Assert.Equal(
+            CreatedAt.AddMinutes(5),
+            recovered.Recovery.DetectedAtUtc);
+        Assert.Equal(reason, recovered.Recovery.Reason);
+        Assert.Equal(
+            "workflow.execution-interrupted",
+            recovered.AuditEvents.Last().EventType);
+    }
+
+    [Fact]
+    public async Task ReconciliationHonorsCancellationWithoutMutation()
+    {
+        var snapshot = Snapshot();
+        using var store = new SqliteWorkflowStore(DatabasePath());
+        await store.CreateAsync(snapshot);
+        var queued = await store.TryTransitionAsync(
+            snapshot.Workflow.Id,
+            snapshot.Workflow.Version,
+            WorkflowStatus.PendingApproval,
+            WorkflowStatus.Queued,
+            "workflow.execution-queued",
+            "Workflow queued.",
+            CreatedAt.AddMinutes(1));
+        await store.TryStartExecutionAsync(
+            snapshot.Workflow.Id,
+            queued.Current.Workflow.Version,
+            ProviderSelection(),
+            CreatedAt.AddMinutes(2));
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => store.ReconcileInterruptedExecutionsAsync(
+                CreatedAt.AddMinutes(5),
+                "Host restart detected.",
+                cancellation.Token));
+        var current = await store.GetAsync(snapshot.Workflow.Id);
+
+        Assert.NotNull(current);
+        Assert.Equal(WorkflowStatus.Running, current.Workflow.Status);
+        Assert.Null(current.Recovery);
+    }
+
+    [Fact]
+    public async Task ExistingDatabaseSchemaIsMigratedIdempotently()
+    {
+        var databasePath = DatabasePath();
+        await CreateLegacySchemaAsync(databasePath);
+        var snapshot = Snapshot();
+
+        using (var migratedStore = new SqliteWorkflowStore(databasePath))
+        {
+            await migratedStore.CreateAsync(snapshot);
+            var restored = await migratedStore.GetAsync(snapshot.Workflow.Id);
+
+            Assert.NotNull(restored);
+            Assert.Null(restored.ProviderSelection);
+            Assert.Null(restored.Execution);
+            Assert.Null(restored.Artifacts);
+            Assert.Null(restored.Recovery);
+        }
+
+        using var reopenedStore = new SqliteWorkflowStore(databasePath);
+        var reopened = await reopenedStore.GetAsync(snapshot.Workflow.Id);
+
+        Assert.NotNull(reopened);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))
@@ -164,6 +385,109 @@ public sealed class SqliteWorkflowStoreTests : IDisposable
 
     private string DatabasePath() =>
         Path.Combine(_directory, "projectforge.db");
+
+    private static WorkflowProviderSelectionEvidence ProviderSelection(
+        string selectedProvider = "local-provider") =>
+        new()
+        {
+            SelectedProviderName = selectedProvider,
+            EstimatedCost = 0.25m,
+            Candidates =
+            [
+                new WorkflowProviderCandidateEvidence
+                {
+                    ProviderName = selectedProvider,
+                    EstimatedCost = 0.25m
+                },
+                new WorkflowProviderCandidateEvidence
+                {
+                    ProviderName = "ineligible-provider",
+                    Rejections =
+                    [
+                        new WorkflowProviderRejectionEvidence
+                        {
+                            Code =
+                                ProviderRejectionCode.CapabilityNotSupported,
+                            Message = "Capability is not supported."
+                        }
+                    ]
+                }
+            ]
+        };
+
+    private static WorkflowExecutionEvidence SuccessfulExecution(
+        Guid requestId) =>
+        new()
+        {
+            RequestId = requestId,
+            ProviderName = "local-provider",
+            Outcome = WorkflowExecutionOutcome.Succeeded,
+            Summary = "Execution completed.",
+            Output = "Durable output.",
+            StartedAtUtc = CreatedAt.AddMinutes(2),
+            CompletedAtUtc = CreatedAt.AddMinutes(3),
+            EstimatedCost = 0.25m,
+            Metadata = new Dictionary<string, string>
+            {
+                ["mode"] = "deterministic"
+            }
+        };
+
+    private static WorkflowArtifactPaths ArtifactPaths() =>
+        new()
+        {
+            MarkdownPath = Path.GetFullPath("artifacts/result.md"),
+            JsonPath = Path.GetFullPath("artifacts/result.json")
+        };
+
+    private static async Task CreateLegacySchemaAsync(string databasePath)
+    {
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(databasePath) ??
+            throw new InvalidOperationException(
+                "The database path must include a directory."));
+        await using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Pooling = false
+            }.ToString());
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            CREATE TABLE workflows (
+                id TEXT PRIMARY KEY,
+                request_json TEXT NOT NULL,
+                status INTEGER NOT NULL,
+                version INTEGER NOT NULL,
+                created_at_utc TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL,
+                failure_message TEXT NULL
+            );
+
+            CREATE TABLE approvals (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL UNIQUE,
+                prompt TEXT NOT NULL,
+                decision INTEGER NULL,
+                decided_by TEXT NULL,
+                requested_at_utc TEXT NOT NULL,
+                decided_at_utc TEXT NULL,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id)
+            );
+
+            CREATE TABLE audit_events (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                occurred_at_utc TEXT NOT NULL,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id)
+            );
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
 
     private static WorkflowSnapshot Snapshot(
         DateTimeOffset? createdAt = null)
