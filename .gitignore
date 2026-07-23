@@ -2,6 +2,14 @@
 [Bb]in/
 [Oo]bj/
 [Aa]rtifacts/
+!ProjectForge.Application/Artifacts/
+!ProjectForge.Application/Artifacts/**
+!ProjectForge.Application.Tests/Artifacts/
+!ProjectForge.Application.Tests/Artifacts/**
+!ProjectForge.Infrastructure/Artifacts/
+!ProjectForge.Infrastructure/Artifacts/**
+!ProjectForge.Infrastructure.Tests/Artifacts/
+!ProjectForge.Infrastructure.Tests/Artifacts/**
 
 # Visual Studio
 .vs/
