@@ -9,13 +9,14 @@ work to established tools.
 
 ## Status
 
-ProjectForge is in its foundation phase. The current code defines
-provider-independent engineering capabilities, provider contracts, health
-reporting, registration, and an initial resource scheduler.
+ProjectForge has a working technical spike that creates approval-gated
+workflows, persists them in SQLite, survives process restart, selects a
+deterministic local provider, executes approved work once, and publishes
+auditable Markdown and JSON artifacts.
 
-The first technical milestone is an end-to-end workflow that can pause for human
-approval, survive a process restart, select an eligible provider, and produce an
-auditable result.
+The spike remains a development milestone rather than a production release.
+Authentication, real AI-provider integration, and the operator dashboard remain
+on the roadmap.
 
 See the [roadmap](docs/ROADMAP.md) for current progress and upcoming milestones.
 
@@ -73,6 +74,11 @@ Run the automated tests with:
 ```shell
 dotnet test --no-restore
 ```
+
+Follow the
+[technical-spike manual demonstration](docs/MANUAL_DEMO.md)
+to reproduce the pause, restart, approval, execution, artifact, and audit
+lifecycle.
 
 ## Development approach
 

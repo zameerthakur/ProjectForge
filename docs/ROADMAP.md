@@ -30,7 +30,7 @@ Acceptance criteria:
 
 ## M1 — Provider selection policy
 
-Status: In progress
+Status: Ready for maintainer approval
 
 Outcome: ProjectForge deterministically selects the best eligible provider and
 explains the decision.
@@ -48,7 +48,7 @@ Acceptance criteria:
 
 ## M2 — Durable approval workflow
 
-Status: In progress
+Status: Ready for maintainer approval
 
 Outcome: A workflow can pause for approval, restart, and resume exactly once.
 

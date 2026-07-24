@@ -338,6 +338,96 @@ public sealed class WorkflowEndpointTests
         }
     }
 
+    [Fact]
+    public async Task PendingApprovalSurvivesRestartAndExecutesOnce()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "ProjectForge.Host.Tests",
+            Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(directory, "workflows.db");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            WorkflowSnapshot created;
+            using (var initialHost = new TestHost(databasePath))
+            {
+                using var createResponse = await CreateWorkflowAsync(
+                    initialHost.Client);
+                created = await ReadWorkflowAsync(createResponse);
+                Assert.Equal(
+                    WorkflowStatus.PendingApproval,
+                    created.Workflow.Status);
+            }
+
+            using var restartedHost = new TestHost(databasePath);
+            var restored = await restartedHost.Client
+                .GetFromJsonAsync<WorkflowSnapshot>(
+                    $"/workflows/{created.Workflow.Id:D}");
+
+            Assert.NotNull(restored);
+            Assert.Equal(
+                WorkflowStatus.PendingApproval,
+                restored.Workflow.Status);
+            Assert.Equal(created.Approval!.Id, restored.Approval!.Id);
+
+            var decisionPath =
+                $"/workflows/{created.Workflow.Id:D}/decisions";
+            using var approvedResponse =
+                await restartedHost.Client.PostAsJsonAsync(
+                    decisionPath,
+                    new
+                    {
+                        expectedVersion = created.Workflow.Version,
+                        decision = ApprovalDecision.Approved,
+                        decidedBy = "restart-test"
+                    });
+            var completed = await ReadWorkflowAsync(approvedResponse);
+
+            Assert.Equal(HttpStatusCode.OK, approvedResponse.StatusCode);
+            Assert.Equal(
+                WorkflowStatus.Succeeded,
+                completed.Workflow.Status);
+            Assert.NotNull(completed.ProviderSelection);
+            Assert.NotNull(completed.Execution);
+            Assert.True(File.Exists(completed.Artifacts!.MarkdownPath));
+            Assert.True(File.Exists(completed.Artifacts.JsonPath));
+
+            using var repeatedResponse =
+                await restartedHost.Client.PostAsJsonAsync(
+                    decisionPath,
+                    new
+                    {
+                        expectedVersion = created.Workflow.Version,
+                        decision = ApprovalDecision.Approved,
+                        decidedBy = "duplicate-test"
+                    });
+            using var repeatedDocument = JsonDocument.Parse(
+                await repeatedResponse.Content.ReadAsStreamAsync());
+
+            Assert.Equal(
+                HttpStatusCode.Conflict,
+                repeatedResponse.StatusCode);
+            var current = repeatedDocument.RootElement.GetProperty("current");
+            Assert.Equal(
+                completed.Workflow.Version,
+                current.GetProperty("workflow").GetProperty("version")
+                    .GetInt64());
+            Assert.Equal(
+                (int)WorkflowStatus.Succeeded,
+                current.GetProperty("workflow").GetProperty("status")
+                    .GetInt32());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
     private static Task<HttpResponseMessage> CreateWorkflowAsync(
         HttpClient client) =>
         client.PostAsJsonAsync(
