@@ -1,6 +1,7 @@
 using ProjectForge.Abstractions.Capabilities;
 using ProjectForge.Abstractions.Health;
 using ProjectForge.Abstractions.Providers;
+using ProjectForge.Application.Artifacts;
 using ProjectForge.Application.Workflows;
 
 namespace ProjectForge.Application.Tests.Workflows;
@@ -24,6 +25,23 @@ public sealed class WorkflowExecutionServiceTests
         Assert.Equal(WorkflowStatus.Succeeded, result.Current.Workflow.Status);
         Assert.Equal(5, result.Current.Workflow.Version);
         Assert.Same(provider.Result, result.Execution);
+        Assert.Equal(
+            WorkflowExecutionOutcome.Succeeded,
+            result.Current.Execution?.Outcome);
+        Assert.Equal(
+            "C:\\artifacts\\result.md",
+            result.Current.Artifacts?.MarkdownPath);
+        Assert.Equal(
+            "C:\\artifacts\\result.json",
+            result.Current.Artifacts?.JsonPath);
+        Assert.Equal(
+            "stub-provider",
+            result.Current.ProviderSelection?.SelectedProviderName);
+        var candidate = Assert.Single(
+            result.Current.ProviderSelection?.Candidates ??
+            Array.Empty<WorkflowProviderCandidateEvidence>());
+        Assert.Equal("stub-provider", candidate.ProviderName);
+        Assert.Equal(1.25m, candidate.EstimatedCost);
         Assert.Equal(1, provider.ExecutionCount);
         Assert.Equal(1, scheduler.SelectionCount);
         Assert.Collection(
@@ -37,8 +55,6 @@ public sealed class WorkflowExecutionServiceTests
             {
                 Assert.Equal(WorkflowStatus.Queued, transition.ExpectedStatus);
                 Assert.Equal(WorkflowStatus.Running, transition.NextStatus);
-                Assert.Contains("stub-provider", transition.Message);
-                Assert.Contains("1.25", transition.Message);
             },
             transition =>
             {
@@ -117,6 +133,10 @@ public sealed class WorkflowExecutionServiceTests
         Assert.Equal(1, provider.ExecutionCount);
         Assert.Equal(2, scheduler.SelectionCount);
         Assert.Single(results, result => result.WasExecutionStarted);
+        var loser = Assert.Single(
+            results,
+            result => !result.WasExecutionStarted);
+        Assert.Null(loser.Selection);
         Assert.Equal(WorkflowStatus.Succeeded, store.Current.Workflow.Status);
     }
 
@@ -159,19 +179,28 @@ public sealed class WorkflowExecutionServiceTests
     [Fact]
     public async Task RecordsUnsuccessfulProviderResultAsFailed()
     {
+        var artifactWriter = new StubArtifactWriter();
         var provider = new StubProvider
         {
             Result = Result(isSuccessful: false, errorMessage: "Execution failed.")
         };
         var store = new InMemoryWorkflowStore(Snapshot(WorkflowStatus.Approved, 2));
 
-        var result = await Service(store, new StubScheduler(provider))
+        var result = await Service(
+                store,
+                new StubScheduler(provider),
+                artifactWriter: artifactWriter)
             .ResumeAsync(WorkflowId, 2);
 
         Assert.True(result.WasExecutionStarted);
         Assert.Same(provider.Result, result.Execution);
         Assert.Equal(WorkflowStatus.Failed, result.Current.Workflow.Status);
         Assert.Equal("Execution failed.", result.Current.Workflow.FailureMessage);
+        Assert.Equal(
+            WorkflowExecutionOutcome.Failed,
+            result.Current.Execution?.Outcome);
+        Assert.Null(result.Current.Artifacts);
+        Assert.Equal(0, artifactWriter.WriteCount);
     }
 
     [Fact]
@@ -190,6 +219,10 @@ public sealed class WorkflowExecutionServiceTests
         Assert.Null(result.Execution);
         Assert.Equal(WorkflowStatus.Failed, result.Current.Workflow.Status);
         Assert.Equal("Provider crashed.", result.Current.Workflow.FailureMessage);
+        Assert.Equal(
+            WorkflowExecutionOutcome.ProviderError,
+            result.Current.Execution?.Outcome);
+        Assert.Null(result.Current.Artifacts);
     }
 
     [Fact]
@@ -209,6 +242,10 @@ public sealed class WorkflowExecutionServiceTests
         Assert.Equal(WorkflowStatus.Failed, result.Current.Workflow.Status);
         Assert.Equal(5, store.Current.Workflow.Version);
         Assert.Equal(1, provider.ExecutionCount);
+        Assert.Equal(
+            WorkflowExecutionOutcome.Canceled,
+            result.Current.Execution?.Outcome);
+        Assert.Null(result.Current.Artifacts);
     }
 
     [Fact]
@@ -232,9 +269,36 @@ public sealed class WorkflowExecutionServiceTests
     [Fact]
     public async Task RejectsResultForDifferentRequest()
     {
+        var artifactWriter = new StubArtifactWriter();
         var provider = new StubProvider
         {
             Result = Result(requestId: Guid.NewGuid())
+        };
+        var store = new InMemoryWorkflowStore(Snapshot(WorkflowStatus.Queued, 3));
+
+        var result = await Service(
+                store,
+                new StubScheduler(provider),
+                artifactWriter: artifactWriter)
+            .ResumeAsync(WorkflowId, 3);
+
+        Assert.Equal(WorkflowStatus.Failed, result.Current.Workflow.Status);
+        Assert.Contains(
+            "does not match",
+            result.Current.Workflow.FailureMessage);
+        Assert.Equal(
+            WorkflowExecutionOutcome.InvalidResult,
+            result.Current.Execution?.Outcome);
+        Assert.Null(result.Current.Artifacts);
+        Assert.Equal(0, artifactWriter.WriteCount);
+    }
+
+    [Fact]
+    public async Task RecordsMissingProviderResultAsInvalid()
+    {
+        var provider = new StubProvider
+        {
+            Result = null!
         };
         var store = new InMemoryWorkflowStore(Snapshot(WorkflowStatus.Queued, 3));
 
@@ -242,9 +306,14 @@ public sealed class WorkflowExecutionServiceTests
             .ResumeAsync(WorkflowId, 3);
 
         Assert.Equal(WorkflowStatus.Failed, result.Current.Workflow.Status);
+        Assert.Equal(
+            WorkflowExecutionOutcome.InvalidResult,
+            result.Current.Execution?.Outcome);
         Assert.Contains(
-            "does not match",
-            result.Current.Workflow.FailureMessage);
+            "no execution result",
+            result.Current.Execution?.ErrorMessage,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Null(result.Current.Artifacts);
     }
 
     [Fact]
@@ -264,6 +333,63 @@ public sealed class WorkflowExecutionServiceTests
 
         Assert.Equal(WorkflowStatus.Failed, result.Current.Workflow.Status);
         Assert.Equal(5, result.Current.Workflow.Version);
+        Assert.Equal(
+            WorkflowExecutionOutcome.TimedOut,
+            result.Current.Execution?.Outcome);
+        Assert.Null(result.Current.Artifacts);
+    }
+
+    [Fact]
+    public async Task RecordsArtifactPublicationFailureWithoutArtifactPaths()
+    {
+        var artifactWriter = new StubArtifactWriter
+        {
+            Exception = new IOException("Disk unavailable.")
+        };
+        var store = new InMemoryWorkflowStore(Snapshot(WorkflowStatus.Queued, 3));
+
+        var result = await Service(
+                store,
+                new StubScheduler(new StubProvider()),
+                artifactWriter: artifactWriter)
+            .ResumeAsync(WorkflowId, 3);
+
+        Assert.Equal(WorkflowStatus.Failed, result.Current.Workflow.Status);
+        Assert.Equal(
+            WorkflowExecutionOutcome.ArtifactError,
+            result.Current.Execution?.Outcome);
+        Assert.Contains(
+            "artifacts could not be published",
+            result.Current.Workflow.FailureMessage,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Null(result.Current.Artifacts);
+        Assert.Equal(1, artifactWriter.WriteCount);
+    }
+
+    [Fact]
+    public async Task RecordsInvalidArtifactWriterResultAsArtifactFailure()
+    {
+        var artifactWriter = new StubArtifactWriter
+        {
+            Result = new ArtifactWriteResult
+            {
+                MarkdownPath = "relative.md",
+                JsonPath = "relative.json"
+            }
+        };
+        var store = new InMemoryWorkflowStore(Snapshot(WorkflowStatus.Queued, 3));
+
+        var result = await Service(
+                store,
+                new StubScheduler(new StubProvider()),
+                artifactWriter: artifactWriter)
+            .ResumeAsync(WorkflowId, 3);
+
+        Assert.Equal(WorkflowStatus.Failed, result.Current.Workflow.Status);
+        Assert.Equal(
+            WorkflowExecutionOutcome.ArtifactError,
+            result.Current.Execution?.Outcome);
+        Assert.Null(result.Current.Artifacts);
     }
 
     private static readonly Guid WorkflowId =
@@ -275,10 +401,12 @@ public sealed class WorkflowExecutionServiceTests
     private static WorkflowExecutionService Service(
         IWorkflowStore store,
         IExplainableResourceScheduler scheduler,
-        TimeSpan? executionTimeout = null) =>
+        TimeSpan? executionTimeout = null,
+        IExecutionArtifactWriter? artifactWriter = null) =>
         new(
             store,
             scheduler,
+            artifactWriter ?? new StubArtifactWriter(),
             new FixedTimeProvider(Now),
             executionTimeout);
 
@@ -369,8 +497,49 @@ public sealed class WorkflowExecutionServiceTests
             return new ProviderSelectionResult
             {
                 SelectedProvider = provider,
-                EstimatedCost = 1.25m
+                EstimatedCost = 1.25m,
+                Evaluations =
+                    new[]
+                    {
+                        new ProviderEvaluation
+                        {
+                            Provider = provider,
+                            EstimatedCost = 1.25m
+                        }
+                    }
             };
+        }
+    }
+
+    private sealed class StubArtifactWriter : IExecutionArtifactWriter
+    {
+        private int _writeCount;
+
+        public Exception? Exception { get; init; }
+
+        public ArtifactWriteResult Result { get; init; } =
+            new()
+            {
+                MarkdownPath = "C:\\artifacts\\result.md",
+                JsonPath = "C:\\artifacts\\result.json"
+            };
+
+        public int WriteCount => _writeCount;
+
+        public Task<ArtifactWriteResult> WriteAsync(
+            Guid workflowId,
+            CapabilityExecutionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _writeCount);
+
+            if (Exception is not null)
+            {
+                return Task.FromException<ArtifactWriteResult>(Exception);
+            }
+
+            return Task.FromResult(Result);
         }
     }
 
@@ -381,7 +550,8 @@ public sealed class WorkflowExecutionServiceTests
         public string Name => "stub-provider";
 
         public IReadOnlyCollection<EngineeringCapability>
-            SupportedCapabilities { get; } =
+            SupportedCapabilities
+        { get; } =
                 new[] { EngineeringCapability.Coding };
 
         public ProviderDescriptor Descriptor { get; } =
@@ -487,8 +657,26 @@ public sealed class WorkflowExecutionServiceTests
             long expectedVersion,
             WorkflowProviderSelectionEvidence providerSelection,
             DateTimeOffset startedAtUtc,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            lock (_sync)
+            {
+                if (!Matches(
+                        workflowId,
+                        expectedVersion,
+                        WorkflowStatus.Queued))
+                {
+                    return NotApplied();
+                }
+
+                return Applied(
+                    WorkflowStatus.Running,
+                    startedAtUtc,
+                    providerSelection: providerSelection);
+            }
+        }
 
         public Task<WorkflowMutationResult> TryCompleteExecutionAsync(
             Guid workflowId,
@@ -500,8 +688,30 @@ public sealed class WorkflowExecutionServiceTests
             string auditMessage,
             DateTimeOffset occurredAtUtc,
             string? failureMessage = null,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            lock (_sync)
+            {
+                if (!Matches(
+                        workflowId,
+                        expectedVersion,
+                        WorkflowStatus.Running))
+                {
+                    return NotApplied();
+                }
+
+                return Applied(
+                    terminalStatus,
+                    occurredAtUtc,
+                    failureMessage,
+                    execution: execution,
+                    artifacts: artifacts,
+                    eventType: auditEventType,
+                    message: auditMessage);
+            }
+        }
 
         public Task<int> ReconcileInterruptedExecutionsAsync(
             DateTimeOffset detectedAtUtc,
@@ -524,56 +734,88 @@ public sealed class WorkflowExecutionServiceTests
 
             lock (_sync)
             {
-                if (workflowId != Current.Workflow.Id ||
-                    expectedVersion != Current.Workflow.Version ||
-                    expectedStatus != Current.Workflow.Status)
+                if (!Matches(workflowId, expectedVersion, expectedStatus))
                 {
-                    return Task.FromResult(
-                        new WorkflowMutationResult
-                        {
-                            WasApplied = false,
-                            Current = Current
-                        });
+                    return NotApplied();
                 }
 
-                Transitions.Add(
-                    new TransitionRecord(
-                        expectedStatus,
-                        nextStatus,
-                        auditMessage));
-                var auditEvents = Current.AuditEvents.Append(
-                    new WorkflowAuditEvent
-                    {
-                        Id = Guid.NewGuid(),
-                        WorkflowId = workflowId,
-                        EventType = auditEventType,
-                        Message = auditMessage,
-                        OccurredAtUtc = occurredAtUtc
-                    }).ToArray();
-                Current = new WorkflowSnapshot
-                {
-                    Workflow = new WorkflowRecord
-                    {
-                        Id = Current.Workflow.Id,
-                        Request = Current.Workflow.Request,
-                        Status = nextStatus,
-                        Version = Current.Workflow.Version + 1,
-                        CreatedAtUtc = Current.Workflow.CreatedAtUtc,
-                        UpdatedAtUtc = occurredAtUtc,
-                        FailureMessage = failureMessage
-                    },
-                    Approval = Current.Approval,
-                    AuditEvents = auditEvents
-                };
-
-                return Task.FromResult(
-                    new WorkflowMutationResult
-                    {
-                        WasApplied = true,
-                        Current = Current
-                    });
+                return Applied(
+                    nextStatus,
+                    occurredAtUtc,
+                    failureMessage,
+                    eventType: auditEventType,
+                    message: auditMessage);
             }
         }
+
+        private bool Matches(
+            Guid workflowId,
+            long expectedVersion,
+            WorkflowStatus expectedStatus) =>
+            workflowId == Current.Workflow.Id &&
+            expectedVersion == Current.Workflow.Version &&
+            expectedStatus == Current.Workflow.Status;
+
+        private Task<WorkflowMutationResult> Applied(
+            WorkflowStatus nextStatus,
+            DateTimeOffset occurredAtUtc,
+            string? failureMessage = null,
+            WorkflowProviderSelectionEvidence? providerSelection = null,
+            WorkflowExecutionEvidence? execution = null,
+            WorkflowArtifactPaths? artifacts = null,
+            string eventType = "workflow.execution-started",
+            string message = "Execution state changed.")
+        {
+            Transitions.Add(
+                new TransitionRecord(
+                    Current.Workflow.Status,
+                    nextStatus,
+                    message));
+            var auditEvents = Current.AuditEvents.Append(
+                new WorkflowAuditEvent
+                {
+                    Id = Guid.NewGuid(),
+                    WorkflowId = Current.Workflow.Id,
+                    EventType = eventType,
+                    Message = message,
+                    OccurredAtUtc = occurredAtUtc
+                }).ToArray();
+            Current = new WorkflowSnapshot
+            {
+                Workflow = new WorkflowRecord
+                {
+                    Id = Current.Workflow.Id,
+                    Request = Current.Workflow.Request,
+                    Status = nextStatus,
+                    Version = Current.Workflow.Version + 1,
+                    CreatedAtUtc = Current.Workflow.CreatedAtUtc,
+                    UpdatedAtUtc = occurredAtUtc,
+                    FailureMessage = failureMessage
+                },
+                Approval = Current.Approval,
+                AuditEvents = auditEvents,
+                ProviderSelection =
+                    providerSelection ?? Current.ProviderSelection,
+                Execution = execution ?? Current.Execution,
+                Artifacts = artifacts,
+                Recovery = Current.Recovery
+            };
+
+            return Task.FromResult(
+                new WorkflowMutationResult
+                {
+                    WasApplied = true,
+                    Current = Current
+                });
+        }
+
+        private Task<WorkflowMutationResult> NotApplied() =>
+            Task.FromResult(
+                new WorkflowMutationResult
+                {
+                    WasApplied = false,
+                    Current = Current
+                });
     }
 
     private sealed record TransitionRecord(

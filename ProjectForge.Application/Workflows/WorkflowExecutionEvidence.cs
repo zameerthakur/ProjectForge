@@ -90,5 +90,11 @@ public enum WorkflowExecutionOutcome
     /// <summary>
     /// The provider threw before returning a result.
     /// </summary>
-    ProviderError = 6
+    ProviderError = 6,
+
+    /// <summary>
+    /// Provider execution succeeded but its durable artifacts could not be
+    /// published.
+    /// </summary>
+    ArtifactError = 7
 }
