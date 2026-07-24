@@ -19,6 +19,8 @@ ProjectForge does not yet publish versioned releases.
   shared operations, waiter isolation, and application-shutdown cancellation.
 - Provider-neutral trusted artifact manifests with strict validation for pinned
   sources, integrity, platform, archive, entrypoint, license, and consent data.
+- Application-owned managed cache staging with path-containment checks,
+  recoverable partial directories, owned cleanup, and atomic verified promotion.
 - Automated tests for provider policy and runtime-provisioning coordination.
 - Application workflow coordination that durably creates pending approvals and
   records optimistic human decisions through the workflow-store boundary.
