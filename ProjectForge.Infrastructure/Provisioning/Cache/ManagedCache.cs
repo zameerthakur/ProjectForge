@@ -47,6 +47,13 @@ public sealed class ManagedCache
         return staging.FinalPath;
     }
 
+    public void DiscardStaging(ManagedCacheStaging staging)
+    {
+        ArgumentNullException.ThrowIfNull(staging);
+        ValidateOwnedStaging(staging);
+        Directory.Delete(staging.StagingPath, recursive: true);
+    }
+
     public IReadOnlyList<string> CleanOwnedStaging(
         string artifactId,
         string version,

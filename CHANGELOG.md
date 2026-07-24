@@ -25,6 +25,8 @@ ProjectForge does not yet publish versioned releases.
   optimistic transitions, restart persistence, and retryable failure state.
 - Bounded ZIP extraction that rejects traversal, links, collisions, expansion
   bombs, overwrites, and archives missing their pinned entrypoint.
+- Verified streaming artifact download with HTTPS redirect policy, exact size
+  and SHA-256 checks, explicit attempt bounds, cancellation, and owned cleanup.
 - Automated tests for provider policy and runtime-provisioning coordination.
 - Application workflow coordination that durably creates pending approvals and
   records optimistic human decisions through the workflow-store boundary.
