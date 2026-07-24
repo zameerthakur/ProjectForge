@@ -27,5 +27,7 @@ ProjectForge does not yet publish versioned releases.
 - End-to-end approved workflow execution through the deterministic local
   provider, with durable evidence, Markdown/JSON artifacts, and interrupted-run
   reconciliation.
+- Separate Ollama and LiteLLM boundary evaluations selecting direct,
+  loopback-only Ollama integration as the first real local AI provider.
 - Public project overview, architecture documentation, roadmap, contribution
   workflow, and Architecture Decision Record process.

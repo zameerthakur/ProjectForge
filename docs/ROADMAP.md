@@ -30,7 +30,7 @@ Acceptance criteria:
 
 ## M1 — Provider selection policy
 
-Status: Ready for maintainer approval
+Status: Approved
 
 Outcome: ProjectForge deterministically selects the best eligible provider and
 explains the decision.
@@ -48,7 +48,7 @@ Acceptance criteria:
 
 ## M2 — Durable approval workflow
 
-Status: Ready for maintainer approval
+Status: Approved
 
 Outcome: A workflow can pause for approval, restart, and resume exactly once.
 
@@ -63,16 +63,20 @@ Acceptance criteria:
 
 ## M3 — First real execution provider
 
-Status: Planned
+Status: In progress
 
 Outcome: An approved workflow executes through one local AI provider.
 
 Acceptance criteria:
 
-- Ollama and LiteLLM boundaries are evaluated separately.
+- [x] Ollama and LiteLLM boundaries are evaluated separately.
 - Secrets and provider configuration remain outside source control.
 - Provider health, model availability, timeout, and failure modes are observable.
 - Execution produces structured JSON and human-readable Markdown artifacts.
+
+Decision: implement direct, loopback-only Ollama integration first. Retain
+LiteLLM as a later optional gateway because it adds a separate runtime and its
+execution locality depends on configured upstream routes.
 
 ## M4 — Coding provider
 
