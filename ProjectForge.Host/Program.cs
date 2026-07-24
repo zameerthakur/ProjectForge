@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Diagnostics;
 using ProjectForge.Abstractions.Capabilities;
 using ProjectForge.Application.Workflows;
 using ProjectForge.Host.Composition;
+using ProjectForge.Host.Configuration;
+using ProjectForge.Host.Providers;
 using ProjectForge.Host.Workflows;
 using ProjectForge.Infrastructure.Workflows;
 
@@ -44,7 +46,12 @@ if (int.TryParse(
     executionTimeout = TimeSpan.FromSeconds(executionTimeoutSeconds);
 }
 
-builder.Services.AddProjectForgeExecution(artifactRoot, executionTimeout);
+var providerConfiguration =
+    ProjectForgeProviderConfiguration.From(builder.Configuration);
+builder.Services.AddProjectForgeExecution(
+    artifactRoot,
+    executionTimeout,
+    providerConfiguration);
 
 var app = builder.Build();
 
@@ -82,6 +89,7 @@ app.UseExceptionHandler(
     });
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
+app.MapProviderEndpoints();
 
 app.MapGet(
     "/workflows",

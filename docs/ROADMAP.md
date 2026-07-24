@@ -70,9 +70,11 @@ Outcome: An approved workflow executes through one local AI provider.
 Acceptance criteria:
 
 - [x] Ollama and LiteLLM boundaries are evaluated separately.
-- Secrets and provider configuration remain outside source control.
-- Provider health, model availability, timeout, and failure modes are observable.
-- Execution produces structured JSON and human-readable Markdown artifacts.
+- [x] Secrets and provider configuration remain outside source control.
+- [x] Provider health, model availability, timeout, and failure modes are
+  observable.
+- [ ] Execution through the real provider produces structured JSON and
+  human-readable Markdown artifacts.
 
 Decision: implement direct, loopback-only Ollama integration first. Retain
 LiteLLM as a later optional gateway because it adds a separate runtime and its

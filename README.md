@@ -15,8 +15,9 @@ deterministic local provider, executes approved work once, and publishes
 auditable Markdown and JSON artifacts.
 
 The spike remains a development milestone rather than a production release.
-Authentication, real AI-provider integration, and the operator dashboard remain
-on the roadmap.
+A bounded direct Ollama adapter is available for integration testing, while
+managed runtime/model provisioning, authentication, and the operator dashboard
+remain on the roadmap.
 
 See the [roadmap](docs/ROADMAP.md) for current progress and upcoming milestones.
 
@@ -47,7 +48,8 @@ design principles, and the planned vertical slice.
 - `ProjectForge.Abstractions` contains stable contracts and domain models.
 - `ProjectForge.Core` contains provider registration and orchestration policy.
 - `ProjectForge.Application` contains approval-gated workflow coordination.
-- `ProjectForge.Infrastructure` contains SQLite-backed durable state.
+- `ProjectForge.Infrastructure` contains SQLite-backed durable state, artifact
+  writing, and concrete execution providers.
 - `ProjectForge.Host` exposes the executable workflow HTTP API.
 - `ProjectForge.Core.Tests` and `ProjectForge.Application.Tests` contain
   behavior-focused automated verification.
@@ -79,6 +81,33 @@ Follow the
 [technical-spike manual demonstration](docs/MANUAL_DEMO.md)
 to reproduce the pause, restart, approval, execution, artifact, and audit
 lifecycle.
+
+## Ollama integration boundary
+
+The first M3 slice can connect to an already-running Ollama service on an HTTP
+loopback address. It refuses to become ready unless the configured runtime
+version, exact model name, SHA-256 digest, and completion capability all match.
+`GET /providers` exposes the resulting readiness without returning provider
+configuration or arbitrary metadata.
+
+Select Ollama through external configuration:
+
+```powershell
+$env:ProjectForge__Providers__Mode = "Ollama"
+$env:ProjectForge__Providers__Ollama__Endpoint = "http://127.0.0.1:11434"
+$env:ProjectForge__Providers__Ollama__Model = "<exact-installed-model>"
+$env:ProjectForge__Providers__Ollama__ExpectedDigest = "<64-hex-digest>"
+$env:ProjectForge__Providers__Ollama__MinimumRuntimeVersion = "<minimum>"
+$env:ProjectForge__Providers__Ollama__MaximumRuntimeVersionExclusive = "<maximum>"
+```
+
+This is a development integration boundary, not the finished zero-friction
+experience. ProjectForge does not yet download Ollama or models because doing
+so safely requires a reviewed artifact/model manifest, published integrity
+evidence, model-license consent, restart recovery, and managed lifecycle
+cancellation. See the separate
+[Ollama](docs/evaluations/OLLAMA.md) and
+[LiteLLM](docs/evaluations/LITELLM.md) evaluations.
 
 ## Development approach
 

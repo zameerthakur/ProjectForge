@@ -3,6 +3,7 @@ using ProjectForge.Abstractions.Providers;
 using ProjectForge.Application.Artifacts;
 using ProjectForge.Application.Workflows;
 using ProjectForge.Core.Providers;
+using ProjectForge.Host.Configuration;
 using ProjectForge.Infrastructure.Artifacts;
 using ProjectForge.Infrastructure.Providers;
 
@@ -39,7 +40,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddProjectForgeExecution(
         this IServiceCollection services,
         string artifactRoot,
-        TimeSpan? executionTimeout = null)
+        TimeSpan? executionTimeout = null,
+        ProjectForgeProviderConfiguration? providerConfiguration = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(artifactRoot);
@@ -57,12 +59,11 @@ public static class ServiceCollectionExtensions
 
         var artifactWriter = new FileSystemExecutionArtifactWriter(
             artifactRoot);
+        providerConfiguration ??= new ProjectForgeProviderConfiguration();
+        providerConfiguration.Validate();
 
         services.TryAddSingleton(TimeProvider.System);
-        services.AddSingleton<LocalMockCapabilityProvider>();
-        services.AddSingleton<ICapabilityProvider>(
-            provider => provider.GetRequiredService<
-                LocalMockCapabilityProvider>());
+        RegisterCapabilityProvider(services, providerConfiguration);
 
         services.AddSingleton<ProviderRegistry>();
         services.AddSingleton<IProviderRegistry>(
@@ -95,5 +96,32 @@ public static class ServiceCollectionExtensions
                 WorkflowExecutionService>());
 
         return services;
+    }
+
+    private static void RegisterCapabilityProvider(
+        IServiceCollection services,
+        ProjectForgeProviderConfiguration configuration)
+    {
+        if (configuration.Mode == ProjectForgeProviderMode.LocalMock)
+        {
+            services.AddSingleton<LocalMockCapabilityProvider>();
+            services.AddSingleton<ICapabilityProvider>(
+                provider => provider.GetRequiredService<
+                    LocalMockCapabilityProvider>());
+            return;
+        }
+
+        var options = configuration.CreateOllamaOptions();
+        services.AddSingleton(options);
+        services.AddSingleton(
+            new HttpClient
+            {
+                BaseAddress = options.Endpoint,
+                Timeout = configuration.Ollama.RequestTimeout
+            });
+        services.AddSingleton<OllamaCapabilityProvider>();
+        services.AddSingleton<ICapabilityProvider>(
+            provider => provider.GetRequiredService<
+                OllamaCapabilityProvider>());
     }
 }

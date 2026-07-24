@@ -29,5 +29,9 @@ ProjectForge does not yet publish versioned releases.
   reconciliation.
 - Separate Ollama and LiteLLM boundary evaluations selecting direct,
   loopback-only Ollama integration as the first real local AI provider.
+- Bounded direct Ollama execution with runtime, model, digest, and capability
+  readiness checks, external configuration, sanitized failures, and token
+  evidence.
+- Operator-safe provider readiness through `GET /providers`.
 - Public project overview, architecture documentation, roadmap, contribution
   workflow, and Architecture Decision Record process.
