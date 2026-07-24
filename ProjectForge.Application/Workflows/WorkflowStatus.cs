@@ -44,5 +44,18 @@ public enum WorkflowStatus
     /// Execution was interrupted and requires operator reconciliation before
     /// any further provider work can be attempted.
     /// </summary>
-    ReconciliationRequired = 8
+    ReconciliationRequired = 8,
+
+    /// <summary>
+    /// The selected provider's pinned runtime requirements are being verified
+    /// or provisioned before provider execution can be claimed.
+    /// </summary>
+    Provisioning = 9,
+
+    /// <summary>
+    /// Provider provisioning failed before execution was claimed. The workflow
+    /// remains retryable after configuration, consent, or transient failures
+    /// are resolved.
+    /// </summary>
+    ProvisioningFailed = 10
 }

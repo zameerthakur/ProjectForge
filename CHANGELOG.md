@@ -21,6 +21,8 @@ ProjectForge does not yet publish versioned releases.
   sources, integrity, platform, archive, entrypoint, license, and consent data.
 - Application-owned managed cache staging with path-containment checks,
   recoverable partial directories, owned cleanup, and atomic verified promotion.
+- Durable workflow provisioning attempts with pinned requirement evidence,
+  optimistic transitions, restart persistence, and retryable failure state.
 - Automated tests for provider policy and runtime-provisioning coordination.
 - Application workflow coordination that durably creates pending approvals and
   records optimistic human decisions through the workflow-store boundary.

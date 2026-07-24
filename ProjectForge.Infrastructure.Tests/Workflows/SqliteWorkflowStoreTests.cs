@@ -364,6 +364,7 @@ public sealed class SqliteWorkflowStoreTests : IDisposable
 
             Assert.NotNull(restored);
             Assert.Null(restored.ProviderSelection);
+            Assert.Null(restored.Provisioning);
             Assert.Null(restored.Execution);
             Assert.Null(restored.Artifacts);
             Assert.Null(restored.Recovery);
@@ -373,6 +374,119 @@ public sealed class SqliteWorkflowStoreTests : IDisposable
         var reopened = await reopenedStore.GetAsync(snapshot.Workflow.Id);
 
         Assert.NotNull(reopened);
+    }
+
+    [Fact]
+    public async Task ProvisioningAttemptSurvivesRestartAndCompletesExactlyOnce()
+    {
+        var snapshot = Snapshot();
+        var databasePath = DatabasePath();
+        WorkflowMutationResult provisioning;
+        using (var initialStore = new SqliteWorkflowStore(databasePath))
+        {
+            await initialStore.CreateAsync(snapshot);
+            var approved = await initialStore.TryRecordDecisionAsync(
+                snapshot.Workflow.Id,
+                1,
+                ApprovalDecision.Approved,
+                "maintainer",
+                CreatedAt.AddMinutes(1));
+            var queued = await initialStore.TryTransitionAsync(
+                snapshot.Workflow.Id,
+                approved.Current.Workflow.Version,
+                WorkflowStatus.Approved,
+                WorkflowStatus.Queued,
+                "workflow.queued",
+                "Workflow queued.",
+                CreatedAt.AddMinutes(2));
+            provisioning = await initialStore.TryBeginProvisioningAsync(
+                snapshot.Workflow.Id,
+                queued.Current.Workflow.Version,
+                ProviderSelection(),
+                Provisioning(WorkflowProvisioningStatus.InProgress));
+        }
+
+        using var restartedStore = new SqliteWorkflowStore(databasePath);
+        var restored = await restartedStore.GetAsync(snapshot.Workflow.Id);
+        Assert.NotNull(restored);
+        Assert.Equal(WorkflowStatus.Provisioning, restored.Workflow.Status);
+        Assert.Equal("ollama", restored.Provisioning!.ProviderId);
+        Assert.Equal("0.30.8", restored.Provisioning.ProviderVersion);
+        Assert.Equal(
+            "qwen3",
+            Assert.Single(restored.Provisioning.Requirements).RequirementId);
+
+        var completedEvidence =
+            Provisioning(WorkflowProvisioningStatus.Succeeded);
+        var completed = await restartedStore.TryCompleteProvisioningAsync(
+            snapshot.Workflow.Id,
+            provisioning.Current.Workflow.Version,
+            completedEvidence);
+        var repeated = await restartedStore.TryCompleteProvisioningAsync(
+            snapshot.Workflow.Id,
+            provisioning.Current.Workflow.Version,
+            completedEvidence);
+
+        Assert.True(completed.WasApplied);
+        Assert.Equal(WorkflowStatus.Queued, completed.Current.Workflow.Status);
+        Assert.Equal(
+            WorkflowProvisioningStatus.Succeeded,
+            completed.Current.Provisioning!.Status);
+        Assert.False(repeated.WasApplied);
+        Assert.Equal(
+            completed.Current.Workflow.Version,
+            repeated.Current.Workflow.Version);
+        Assert.Equal(
+            1,
+            completed.Current.AuditEvents.Count(
+                item => item.EventType == "workflow.provisioning-succeeded"));
+    }
+
+    [Fact]
+    public async Task FailedProvisioningCanBeRetriedWithoutClaimingExecution()
+    {
+        var snapshot = Snapshot();
+        using var store = new SqliteWorkflowStore(DatabasePath());
+        await store.CreateAsync(snapshot);
+        var approved = await store.TryRecordDecisionAsync(
+            snapshot.Workflow.Id,
+            1,
+            ApprovalDecision.Approved,
+            "maintainer",
+            CreatedAt.AddMinutes(1));
+        var queued = await store.TryTransitionAsync(
+            snapshot.Workflow.Id,
+            approved.Current.Workflow.Version,
+            WorkflowStatus.Approved,
+            WorkflowStatus.Queued,
+            "workflow.queued",
+            "Workflow queued.",
+            CreatedAt.AddMinutes(2));
+        var started = await store.TryBeginProvisioningAsync(
+            snapshot.Workflow.Id,
+            queued.Current.Workflow.Version,
+            ProviderSelection(),
+            Provisioning(WorkflowProvisioningStatus.InProgress));
+        var failed = await store.TryCompleteProvisioningAsync(
+            snapshot.Workflow.Id,
+            started.Current.Workflow.Version,
+            Provisioning(WorkflowProvisioningStatus.Failed));
+        var retryEvidence = Provisioning(
+            WorkflowProvisioningStatus.InProgress,
+            attempt: 2);
+        var retried = await store.TryBeginProvisioningAsync(
+            snapshot.Workflow.Id,
+            failed.Current.Workflow.Version,
+            ProviderSelection(),
+            retryEvidence);
+
+        Assert.Equal(
+            WorkflowStatus.ProvisioningFailed,
+            failed.Current.Workflow.Status);
+        Assert.Null(failed.Current.Execution);
+        Assert.True(retried.WasApplied);
+        Assert.Equal(WorkflowStatus.Provisioning, retried.Current.Workflow.Status);
+        Assert.Equal(2, retried.Current.Provisioning!.Attempt);
     }
 
     public void Dispose()
@@ -385,6 +499,39 @@ public sealed class SqliteWorkflowStoreTests : IDisposable
 
     private string DatabasePath() =>
         Path.Combine(_directory, "projectforge.db");
+
+    private static WorkflowProvisioningEvidence Provisioning(
+        WorkflowProvisioningStatus status,
+        int attempt = 1) =>
+        new()
+        {
+            ProviderId = "ollama",
+            ProviderVersion = "0.30.8",
+            Attempt = attempt,
+            Status = status,
+            Requirements =
+            [
+                new WorkflowProvisioningRequirementEvidence
+                {
+                    RequirementId = "qwen3",
+                    Version = "8b-q4_K_M",
+                    Category = "model"
+                }
+            ],
+            StartedAtUtc = CreatedAt.AddMinutes(3),
+            CompletedAtUtc =
+                status == WorkflowProvisioningStatus.InProgress
+                    ? null
+                    : CreatedAt.AddMinutes(4),
+            FailureCategory =
+                status == WorkflowProvisioningStatus.Failed
+                    ? "transient"
+                    : null,
+            FailureMessage =
+                status == WorkflowProvisioningStatus.Failed
+                    ? "Provisioning failed safely."
+                    : null
+        };
 
     private static WorkflowProviderSelectionEvidence ProviderSelection(
         string selectedProvider = "local-provider") =>

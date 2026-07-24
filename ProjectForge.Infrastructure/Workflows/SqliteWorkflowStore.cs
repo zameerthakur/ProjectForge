@@ -55,10 +55,10 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
             INSERT INTO workflows (
                 id, request_json, status, version, created_at_utc,
                 updated_at_utc, failure_message, provider_selection_json,
-                execution_json, artifacts_json, recovery_json)
+                provisioning_json, execution_json, artifacts_json, recovery_json)
             VALUES (
                 $id, $request, $status, $version, $created, $updated, $failure,
-                $selection, $execution, $artifacts, $recovery);
+                $selection, $provisioning, $execution, $artifacts, $recovery);
             """,
             cancellationToken,
             ("$id", workflow.Workflow.Id.ToString("D")),
@@ -71,6 +71,7 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
             ("$updated", Format(workflow.Workflow.UpdatedAtUtc)),
             ("$failure", workflow.Workflow.FailureMessage),
             ("$selection", Serialize(workflow.ProviderSelection)),
+            ("$provisioning", Serialize(workflow.Provisioning)),
             ("$execution", Serialize(workflow.Execution)),
             ("$artifacts", Serialize(workflow.Artifacts)),
             ("$recovery", Serialize(workflow.Recovery)));
@@ -318,6 +319,165 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
                 transaction: null,
                 workflowId,
                 cancellationToken));
+    }
+
+    public async Task<WorkflowMutationResult> TryBeginProvisioningAsync(
+        Guid workflowId,
+        long expectedVersion,
+        WorkflowProviderSelectionEvidence providerSelection,
+        WorkflowProvisioningEvidence provisioning,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProviderSelection(providerSelection);
+        ValidateProvisioning(provisioning, WorkflowProvisioningStatus.InProgress);
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)
+            await connection.BeginTransactionAsync(cancellationToken);
+        var changed = await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            UPDATE workflows
+            SET status = $provisioning_status,
+                version = version + 1,
+                updated_at_utc = $started,
+                failure_message = NULL,
+                provider_selection_json = $selection,
+                provisioning_json = $provisioning,
+                execution_json = NULL,
+                artifacts_json = NULL,
+                recovery_json = NULL
+            WHERE id = $id
+              AND version = $version
+              AND status IN ($queued, $provisioning_failed);
+            """,
+            cancellationToken,
+            ("$provisioning_status", (int)WorkflowStatus.Provisioning),
+            ("$started", Format(provisioning.StartedAtUtc)),
+            ("$selection", Serialize(providerSelection)),
+            ("$provisioning", Serialize(provisioning)),
+            ("$id", workflowId.ToString("D")),
+            ("$version", expectedVersion),
+            ("$queued", (int)WorkflowStatus.Queued),
+            ("$provisioning_failed", (int)WorkflowStatus.ProvisioningFailed));
+
+        if (changed == 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return NotApplied(
+                await GetAsync(connection, null, workflowId, cancellationToken));
+        }
+
+        await InsertAuditAsync(
+            connection,
+            transaction,
+            new WorkflowAuditEvent
+            {
+                Id = Guid.NewGuid(),
+                WorkflowId = workflowId,
+                EventType = "workflow.provisioning-started",
+                Message =
+                    $"Provisioning attempt {provisioning.Attempt} started for " +
+                    $"provider '{provisioning.ProviderId}'.",
+                OccurredAtUtc = provisioning.StartedAtUtc
+            },
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return Applied(
+            await GetAsync(connection, null, workflowId, cancellationToken));
+    }
+
+    public async Task<WorkflowMutationResult> TryCompleteProvisioningAsync(
+        Guid workflowId,
+        long expectedVersion,
+        WorkflowProvisioningEvidence provisioning,
+        CancellationToken cancellationToken = default)
+    {
+        if (provisioning.Status == WorkflowProvisioningStatus.InProgress)
+        {
+            throw new ArgumentException(
+                "Completed provisioning evidence cannot be in progress.",
+                nameof(provisioning));
+        }
+
+        ValidateProvisioning(provisioning, provisioning.Status);
+        var nextStatus =
+            provisioning.Status == WorkflowProvisioningStatus.Succeeded
+                ? WorkflowStatus.Queued
+                : WorkflowStatus.ProvisioningFailed;
+        var eventType =
+            provisioning.Status == WorkflowProvisioningStatus.Succeeded
+                ? "workflow.provisioning-succeeded"
+                : "workflow.provisioning-failed";
+        var message =
+            provisioning.Status == WorkflowProvisioningStatus.Succeeded
+                ? $"Provider '{provisioning.ProviderId}' is ready for execution."
+                : provisioning.FailureMessage ??
+                  $"Provider '{provisioning.ProviderId}' provisioning failed.";
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)
+            await connection.BeginTransactionAsync(cancellationToken);
+        var previous = await GetAsync(
+            connection,
+            transaction,
+            workflowId,
+            cancellationToken);
+        if (previous is not null &&
+            previous.Workflow.Version == expectedVersion &&
+            previous.Workflow.Status == WorkflowStatus.Provisioning)
+        {
+            ValidateProvisioningCorrelation(previous, provisioning);
+        }
+
+        var changed = await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            UPDATE workflows
+            SET status = $next_status,
+                version = version + 1,
+                updated_at_utc = $completed,
+                failure_message = $failure,
+                provisioning_json = $provisioning
+            WHERE id = $id
+              AND version = $version
+              AND status = $provisioning_status;
+            """,
+            cancellationToken,
+            ("$next_status", (int)nextStatus),
+            ("$completed", Format(provisioning.CompletedAtUtc!.Value)),
+            ("$failure", provisioning.FailureMessage),
+            ("$provisioning", Serialize(provisioning)),
+            ("$id", workflowId.ToString("D")),
+            ("$version", expectedVersion),
+            ("$provisioning_status", (int)WorkflowStatus.Provisioning));
+
+        if (changed == 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return NotApplied(
+                await GetAsync(connection, null, workflowId, cancellationToken));
+        }
+
+        await InsertAuditAsync(
+            connection,
+            transaction,
+            new WorkflowAuditEvent
+            {
+                Id = Guid.NewGuid(),
+                WorkflowId = workflowId,
+                EventType = eventType,
+                Message = message,
+                OccurredAtUtc = provisioning.CompletedAtUtc.Value
+            },
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return Applied(
+            await GetAsync(connection, null, workflowId, cancellationToken));
     }
 
     public async Task<WorkflowMutationResult> TryStartExecutionAsync(
@@ -622,6 +782,7 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
                     updated_at_utc TEXT NOT NULL,
                     failure_message TEXT NULL,
                     provider_selection_json TEXT NULL,
+                    provisioning_json TEXT NULL,
                     execution_json TEXT NULL,
                     artifacts_json TEXT NULL,
                     recovery_json TEXT NULL
@@ -656,6 +817,12 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
                 connection,
                 transaction,
                 "provider_selection_json",
+                "TEXT NULL",
+                cancellationToken);
+            await EnsureWorkflowColumnAsync(
+                connection,
+                transaction,
+                "provisioning_json",
                 "TEXT NULL",
                 cancellationToken);
             await EnsureWorkflowColumnAsync(
@@ -730,6 +897,13 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
                     transaction,
                     workflowId,
                     "provider_selection_json",
+                    cancellationToken),
+            Provisioning =
+                await ReadJsonColumnAsync<WorkflowProvisioningEvidence>(
+                    connection,
+                    transaction,
+                    workflowId,
+                    "provisioning_json",
                     cancellationToken),
             Execution = await ReadJsonColumnAsync<WorkflowExecutionEvidence>(
                 connection,
@@ -1142,6 +1316,95 @@ public sealed class SqliteWorkflowStore : IWorkflowStore, IDisposable
             throw new ArgumentException(
                 "Artifacts are only supported for successful execution.",
                 nameof(artifacts));
+        }
+    }
+
+    private static void ValidateProvisioning(
+        WorkflowProvisioningEvidence provisioning,
+        WorkflowProvisioningStatus expectedStatus)
+    {
+        ArgumentNullException.ThrowIfNull(provisioning);
+        ArgumentException.ThrowIfNullOrWhiteSpace(provisioning.ProviderId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(provisioning.ProviderVersion);
+        ArgumentOutOfRangeException.ThrowIfLessThan(provisioning.Attempt, 1);
+        if (!Enum.IsDefined(provisioning.Status))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(provisioning),
+                provisioning.Status,
+                "The provisioning status is invalid.");
+        }
+
+        if (provisioning.Status != expectedStatus)
+        {
+            throw new ArgumentException(
+                $"Provisioning evidence must have status '{expectedStatus}'.",
+                nameof(provisioning));
+        }
+
+        if (expectedStatus == WorkflowProvisioningStatus.InProgress)
+        {
+            if (provisioning.CompletedAtUtc is not null)
+            {
+                throw new ArgumentException(
+                    "In-progress provisioning cannot have a completion time.",
+                    nameof(provisioning));
+            }
+        }
+        else if (provisioning.CompletedAtUtc is null ||
+                 provisioning.CompletedAtUtc < provisioning.StartedAtUtc)
+        {
+            throw new ArgumentException(
+                "Completed provisioning requires a valid completion time.",
+                nameof(provisioning));
+        }
+
+        if (expectedStatus == WorkflowProvisioningStatus.Failed)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                provisioning.FailureCategory);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                provisioning.FailureMessage);
+        }
+        else if (provisioning.FailureCategory is not null ||
+                 provisioning.FailureMessage is not null)
+        {
+            throw new ArgumentException(
+                "Non-failed provisioning cannot contain failure details.",
+                nameof(provisioning));
+        }
+
+        foreach (var requirement in provisioning.Requirements)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                requirement.RequirementId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(requirement.Version);
+            ArgumentException.ThrowIfNullOrWhiteSpace(requirement.Category);
+        }
+    }
+
+    private static void ValidateProvisioningCorrelation(
+        WorkflowSnapshot current,
+        WorkflowProvisioningEvidence completed)
+    {
+        var started = current.Provisioning ??
+            throw new ArgumentException(
+                "The workflow does not contain an active provisioning attempt.",
+                nameof(completed));
+        if (!string.Equals(
+                started.ProviderId,
+                completed.ProviderId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                started.ProviderVersion,
+                completed.ProviderVersion,
+                StringComparison.Ordinal) ||
+            started.Attempt != completed.Attempt ||
+            started.StartedAtUtc != completed.StartedAtUtc)
+        {
+            throw new ArgumentException(
+                "Completed evidence does not match the active provisioning attempt.",
+                nameof(completed));
         }
     }
 

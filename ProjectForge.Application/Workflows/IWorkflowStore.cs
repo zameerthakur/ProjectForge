@@ -58,6 +58,34 @@ public interface IWorkflowStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Claims a queued workflow for provider provisioning and atomically
+    /// records provider selection and the in-progress attempt.
+    /// </summary>
+    Task<WorkflowMutationResult> TryBeginProvisioningAsync(
+        Guid workflowId,
+        long expectedVersion,
+        WorkflowProviderSelectionEvidence providerSelection,
+        WorkflowProvisioningEvidence provisioning,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<WorkflowMutationResult>(
+            new NotSupportedException(
+                "This workflow store does not support durable provisioning."));
+
+    /// <summary>
+    /// Completes the current provisioning attempt. Successful attempts return
+    /// to the queue so execution can be claimed; failed attempts terminate the
+    /// workflow.
+    /// </summary>
+    Task<WorkflowMutationResult> TryCompleteProvisioningAsync(
+        Guid workflowId,
+        long expectedVersion,
+        WorkflowProvisioningEvidence provisioning,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<WorkflowMutationResult>(
+            new NotSupportedException(
+                "This workflow store does not support durable provisioning."));
+
+    /// <summary>
     /// Claims a queued workflow for execution and atomically records the
     /// provider-selection evidence.
     /// </summary>

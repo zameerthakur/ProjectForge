@@ -27,6 +27,11 @@ public sealed class WorkflowSnapshot
     public WorkflowProviderSelectionEvidence? ProviderSelection { get; init; }
 
     /// <summary>
+    /// Gets evidence for the latest provider provisioning attempt.
+    /// </summary>
+    public WorkflowProvisioningEvidence? Provisioning { get; init; }
+
+    /// <summary>
     /// Gets the normalized provider execution outcome.
     /// </summary>
     public WorkflowExecutionEvidence? Execution { get; init; }
