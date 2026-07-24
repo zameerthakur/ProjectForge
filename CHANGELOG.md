@@ -23,6 +23,8 @@ ProjectForge does not yet publish versioned releases.
   recoverable partial directories, owned cleanup, and atomic verified promotion.
 - Durable workflow provisioning attempts with pinned requirement evidence,
   optimistic transitions, restart persistence, and retryable failure state.
+- Bounded ZIP extraction that rejects traversal, links, collisions, expansion
+  bombs, overwrites, and archives missing their pinned entrypoint.
 - Automated tests for provider policy and runtime-provisioning coordination.
 - Application workflow coordination that durably creates pending approvals and
   records optimistic human decisions through the workflow-store boundary.
