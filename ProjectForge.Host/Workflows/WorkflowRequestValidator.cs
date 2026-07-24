@@ -104,6 +104,25 @@ internal static class WorkflowRequestValidator
         return errors;
     }
 
+    public static IDictionary<string, string[]> Validate(
+        ResumeWorkflowRequest? request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (request is null)
+        {
+            errors["request"] = ["A request body is required."];
+            return errors;
+        }
+
+        if (request.ExpectedVersion < 1)
+        {
+            errors[nameof(request.ExpectedVersion)] =
+                ["The expected version must be positive."];
+        }
+
+        return errors;
+    }
+
     private static void ValidateRequiredText(
         string? value,
         string propertyName,

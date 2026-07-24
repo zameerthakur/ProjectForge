@@ -8,9 +8,9 @@ verified.
 
 ProjectForge has an initial .NET solution with capability-oriented provider
 contracts, deterministic provider selection, bounded health checks, shared
-runtime-provisioning boundaries, and an automated test suite. There is not yet
-an executable host, persisted workflow, concrete provider integration, or
-dashboard.
+runtime-provisioning boundaries, a SQLite-backed workflow API, deterministic
+local execution, durable Markdown/JSON artifacts, and an automated test suite.
+There is not yet a real AI-provider integration or operator dashboard.
 
 ## M0 — Repository foundation
 
@@ -59,7 +59,7 @@ Acceptance criteria:
   spike.
 - [x] Workflow and approval state persist in SQLite.
 - [x] A pending approval survives process termination.
-- Resumption is idempotent and produces an audit trail.
+- [x] Resumption is idempotent and produces an audit trail.
 
 ## M3 — First real execution provider
 

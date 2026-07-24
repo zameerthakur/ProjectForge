@@ -24,5 +24,8 @@ ProjectForge does not yet publish versioned releases.
   workflows with validated requests and stable error responses.
 - Isolated Microsoft Agent Framework validation for typed graphs,
   human-in-the-loop requests, and checkpoint rehydration.
+- End-to-end approved workflow execution through the deterministic local
+  provider, with durable evidence, Markdown/JSON artifacts, and interrupted-run
+  reconciliation.
 - Public project overview, architecture documentation, roadmap, contribution
   workflow, and Architecture Decision Record process.

@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ProjectForge.Application\ProjectForge.Application.csproj" />
+    <ProjectReference Include="..\ProjectForge.Core\ProjectForge.Core.csproj" />
     <ProjectReference Include="..\ProjectForge.Infrastructure\ProjectForge.Infrastructure.csproj" />
   </ItemGroup>
 

@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using ProjectForge.Abstractions.Capabilities;
 using ProjectForge.Application.Workflows;
+using ProjectForge.Infrastructure.Workflows;
 
 namespace ProjectForge.Host.Tests;
 
@@ -49,11 +50,21 @@ public sealed class WorkflowEndpointTests
     }
 
     [Theory]
-    [InlineData(ApprovalDecision.Approved, WorkflowStatus.Approved)]
-    [InlineData(ApprovalDecision.Rejected, WorkflowStatus.Rejected)]
+    [InlineData(
+        ApprovalDecision.Approved,
+        WorkflowStatus.Succeeded,
+        4,
+        true)]
+    [InlineData(
+        ApprovalDecision.Rejected,
+        WorkflowStatus.Rejected,
+        1,
+        false)]
     public async Task RecordDecisionTransitionsPendingWorkflow(
         ApprovalDecision decision,
-        WorkflowStatus expectedStatus)
+        WorkflowStatus expectedStatus,
+        long expectedVersionIncrease,
+        bool expectsExecution)
     {
         using var host = new TestHost();
         using var createResponse = await CreateWorkflowAsync(host.Client);
@@ -71,9 +82,19 @@ public sealed class WorkflowEndpointTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(expectedStatus, updated.Workflow.Status);
-        Assert.Equal(created.Workflow.Version + 1, updated.Workflow.Version);
+        Assert.Equal(
+            created.Workflow.Version + expectedVersionIncrease,
+            updated.Workflow.Version);
         Assert.Equal(decision, updated.Approval?.Decision);
         Assert.Equal("integration-test", updated.Approval?.DecidedBy);
+        Assert.Equal(expectsExecution, updated.Execution is not null);
+        Assert.Equal(expectsExecution, updated.ProviderSelection is not null);
+        Assert.Equal(expectsExecution, updated.Artifacts is not null);
+        if (expectsExecution)
+        {
+            Assert.True(File.Exists(updated.Artifacts!.MarkdownPath));
+            Assert.True(File.Exists(updated.Artifacts.JsonPath));
+        }
     }
 
     [Fact]
@@ -111,10 +132,10 @@ public sealed class WorkflowEndpointTests
             document.RootElement.GetProperty("title").GetString());
         var current = document.RootElement.GetProperty("current");
         Assert.Equal(
-            (int)WorkflowStatus.Approved,
+            (int)WorkflowStatus.Succeeded,
             current.GetProperty("workflow").GetProperty("status").GetInt32());
         Assert.Equal(
-            created.Workflow.Version + 1,
+            created.Workflow.Version + 4,
             current.GetProperty("workflow").GetProperty("version").GetInt64());
     }
 
@@ -214,6 +235,107 @@ public sealed class WorkflowEndpointTests
         Assert.Equal("Workflow not found.", getProblem?.Title);
         Assert.Equal(HttpStatusCode.NotFound, decisionResponse.StatusCode);
         Assert.Equal("Workflow not found.", decisionProblem?.Title);
+    }
+
+    [Fact]
+    public async Task StartupReconcilesPersistedRunningWorkflowForGet()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "ProjectForge.Host.Tests",
+            Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(directory, "workflows.db");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            WorkflowSnapshot running;
+            using (var store = new SqliteWorkflowStore(databasePath))
+            {
+                var coordinator = new WorkflowCoordinator(store);
+                var pending = await coordinator.CreatePendingApprovalAsync(
+                    new CapabilityExecutionRequest
+                    {
+                        WorkflowId = "pending",
+                        TaskId = "restart-test",
+                        TaskName = "Restart recovery",
+                        Instruction = "Exercise interrupted execution recovery.",
+                        Requirement = new CapabilityRequirement
+                        {
+                            Capability = EngineeringCapability.Testing,
+                            RequiresApproval = true,
+                            AllowCloudExecution = false
+                        }
+                    },
+                    "Approve restart recovery test?");
+                var approved = await coordinator.RecordDecisionAsync(
+                    pending.Workflow.Id,
+                    pending.Workflow.Version,
+                    ApprovalDecision.Approved,
+                    "integration-test");
+                var queued = await store.TryTransitionAsync(
+                    pending.Workflow.Id,
+                    approved.Current.Workflow.Version,
+                    WorkflowStatus.Approved,
+                    WorkflowStatus.Queued,
+                    "workflow.execution-queued",
+                    "Workflow queued.",
+                    DateTimeOffset.UtcNow);
+                var claimed = await store.TryStartExecutionAsync(
+                    pending.Workflow.Id,
+                    queued.Current.Workflow.Version,
+                    new WorkflowProviderSelectionEvidence
+                    {
+                        SelectedProviderName = "local-provider",
+                        EstimatedCost = decimal.Zero,
+                        Candidates =
+                        [
+                            new WorkflowProviderCandidateEvidence
+                            {
+                                ProviderName = "local-provider",
+                                EstimatedCost = decimal.Zero
+                            }
+                        ]
+                    },
+                    DateTimeOffset.UtcNow);
+                running = claimed.Current;
+            }
+
+            using var restartedHost = new TestHost(databasePath);
+            using var response = await restartedHost.Client.GetAsync(
+                $"/workflows/{running.Workflow.Id:D}");
+            var recovered = await ReadWorkflowAsync(response);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(
+                WorkflowStatus.ReconciliationRequired,
+                recovered.Workflow.Status);
+            Assert.Equal(
+                running.Workflow.Version + 1,
+                recovered.Workflow.Version);
+            Assert.Equal(
+                WorkflowStatus.Running,
+                recovered.Recovery!.InterruptedStatus);
+            Assert.Equal(
+                running.Workflow.UpdatedAtUtc,
+                recovered.Recovery.InterruptedAtUtc);
+            Assert.Equal(
+                recovered.Workflow.FailureMessage,
+                recovered.Recovery.Reason);
+            Assert.Equal(
+                "workflow.execution-interrupted",
+                recovered.AuditEvents.Last().EventType);
+            Assert.Equal(
+                "local-provider",
+                recovered.ProviderSelection!.SelectedProviderName);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     private static Task<HttpResponseMessage> CreateWorkflowAsync(

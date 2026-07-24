@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics;
 using ProjectForge.Abstractions.Capabilities;
 using ProjectForge.Application.Workflows;
+using ProjectForge.Host.Composition;
 using ProjectForge.Host.Workflows;
 using ProjectForge.Infrastructure.Workflows;
 
@@ -22,6 +23,28 @@ if (string.IsNullOrWhiteSpace(databasePath))
 builder.Services.AddSingleton<IWorkflowStore>(
     _ => new SqliteWorkflowStore(databasePath));
 builder.Services.AddSingleton<IWorkflowCoordinator, WorkflowCoordinator>();
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddHostedService<WorkflowStartupRecoveryService>();
+
+var artifactRoot = builder.Configuration["ProjectForge:ArtifactRoot"];
+if (string.IsNullOrWhiteSpace(artifactRoot))
+{
+    artifactRoot = Path.Combine(
+        Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData),
+        "ProjectForge",
+        "artifacts");
+}
+
+TimeSpan? executionTimeout = null;
+if (int.TryParse(
+        builder.Configuration["ProjectForge:ExecutionTimeoutSeconds"],
+        out var executionTimeoutSeconds))
+{
+    executionTimeout = TimeSpan.FromSeconds(executionTimeoutSeconds);
+}
+
+builder.Services.AddProjectForgeExecution(artifactRoot, executionTimeout);
 
 var app = builder.Build();
 
@@ -130,6 +153,7 @@ app.MapPost(
         Guid workflowId,
         RecordDecisionRequest? input,
         IWorkflowCoordinator coordinator,
+        IWorkflowExecutionService executionService,
         CancellationToken cancellationToken) =>
     {
         var validationErrors = WorkflowRequestValidator.Validate(input);
@@ -146,9 +170,9 @@ app.MapPost(
             input.DecidedBy,
             cancellationToken);
 
-        return result.WasApplied
-            ? Results.Ok(result.Current)
-            : Results.Problem(
+        if (!result.WasApplied)
+        {
+            return Results.Problem(
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Workflow update conflict.",
                 detail:
@@ -157,6 +181,55 @@ app.MapPost(
                 {
                     ["current"] = result.Current
                 });
+        }
+
+        if (input.Decision == ApprovalDecision.Rejected)
+        {
+            return Results.Ok(result.Current);
+        }
+
+        var execution = await executionService.ResumeAsync(
+            workflowId,
+            result.Current.Workflow.Version,
+            cancellationToken);
+        return Results.Ok(execution.Current);
+    });
+
+app.MapPost(
+    "/workflows/{workflowId:guid}/resume",
+    async (
+        Guid workflowId,
+        ResumeWorkflowRequest? input,
+        IWorkflowExecutionService executionService,
+        CancellationToken cancellationToken) =>
+    {
+        var validationErrors = WorkflowRequestValidator.Validate(input);
+        if (validationErrors.Count > 0)
+        {
+            return Results.ValidationProblem(validationErrors);
+        }
+
+        ArgumentNullException.ThrowIfNull(input);
+        var execution = await executionService.ResumeAsync(
+            workflowId,
+            input.ExpectedVersion,
+            cancellationToken);
+
+        if (!execution.WasExecutionStarted &&
+            execution.Current.Workflow.Version != input.ExpectedVersion)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Workflow update conflict.",
+                detail:
+                    "The workflow changed before execution could be resumed.",
+                extensions: new Dictionary<string, object?>
+                {
+                    ["current"] = execution.Current
+                });
+        }
+
+        return Results.Ok(execution.Current);
     });
 
 await app.RunAsync();
