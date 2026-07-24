@@ -9,13 +9,15 @@ work to established tools.
 
 ## Status
 
-ProjectForge is in its foundation phase. The current code defines
-provider-independent engineering capabilities, provider contracts, health
-reporting, registration, and an initial resource scheduler.
+ProjectForge has a working technical spike that creates approval-gated
+workflows, persists them in SQLite, survives process restart, selects a
+deterministic local provider, executes approved work once, and publishes
+auditable Markdown and JSON artifacts.
 
-The first technical milestone is an end-to-end workflow that can pause for human
-approval, survive a process restart, select an eligible provider, and produce an
-auditable result.
+The spike remains a development milestone rather than a production release.
+A bounded direct Ollama adapter is available for integration testing, while
+managed runtime/model provisioning, authentication, and the operator dashboard
+remain on the roadmap.
 
 See the [roadmap](docs/ROADMAP.md) for current progress and upcoming milestones.
 
@@ -45,10 +47,16 @@ design principles, and the planned vertical slice.
 
 - `ProjectForge.Abstractions` contains stable contracts and domain models.
 - `ProjectForge.Core` contains provider registration and orchestration policy.
+- `ProjectForge.Application` contains approval-gated workflow coordination.
+- `ProjectForge.Infrastructure` contains SQLite-backed durable state, artifact
+  writing, and concrete execution providers.
+- `ProjectForge.Host` exposes the executable workflow HTTP API.
+- `ProjectForge.Core.Tests` and `ProjectForge.Application.Tests` contain
+  behavior-focused automated verification.
 - `docs` contains the roadmap, architecture, and decision records.
 
-Additional application, infrastructure, provider, and test projects will be
-introduced only when required by a validated milestone.
+Infrastructure and concrete provider projects will be introduced only when
+required by a validated milestone.
 
 ## Prerequisites
 
@@ -63,7 +71,43 @@ dotnet restore
 dotnet build --no-restore
 ```
 
-Automated tests will be added with the first behavior-focused milestone.
+Run the automated tests with:
+
+```shell
+dotnet test --no-restore
+```
+
+Follow the
+[technical-spike manual demonstration](docs/MANUAL_DEMO.md)
+to reproduce the pause, restart, approval, execution, artifact, and audit
+lifecycle.
+
+## Ollama integration boundary
+
+The first M3 slice can connect to an already-running Ollama service on an HTTP
+loopback address. It refuses to become ready unless the configured runtime
+version, exact model name, SHA-256 digest, and completion capability all match.
+`GET /providers` exposes the resulting readiness without returning provider
+configuration or arbitrary metadata.
+
+Select Ollama through external configuration:
+
+```powershell
+$env:ProjectForge__Providers__Mode = "Ollama"
+$env:ProjectForge__Providers__Ollama__Endpoint = "http://127.0.0.1:11434"
+$env:ProjectForge__Providers__Ollama__Model = "<exact-installed-model>"
+$env:ProjectForge__Providers__Ollama__ExpectedDigest = "<64-hex-digest>"
+$env:ProjectForge__Providers__Ollama__MinimumRuntimeVersion = "<minimum>"
+$env:ProjectForge__Providers__Ollama__MaximumRuntimeVersionExclusive = "<maximum>"
+```
+
+This is a development integration boundary, not the finished zero-friction
+experience. ProjectForge does not yet download Ollama or models because doing
+so safely requires a reviewed artifact/model manifest, published integrity
+evidence, model-license consent, restart recovery, and managed lifecycle
+cancellation. See the separate
+[Ollama](docs/evaluations/OLLAMA.md) and
+[LiteLLM](docs/evaluations/LITELLM.md) evaluations.
 
 ## Development approach
 

@@ -7,9 +7,10 @@ verified.
 ## Current state
 
 ProjectForge has an initial .NET solution with capability-oriented provider
-contracts and a simple provider registry and scheduler. There is not yet an
-executable host, persisted workflow, provider integration, dashboard, or
-automated test suite.
+contracts, deterministic provider selection, bounded health checks, shared
+runtime-provisioning boundaries, a SQLite-backed workflow API, deterministic
+local execution, durable Markdown/JSON artifacts, and an automated test suite.
+There is not yet a real AI-provider integration or operator dashboard.
 
 ## M0 — Repository foundation
 
@@ -24,52 +25,60 @@ Acceptance criteria:
 - [x] Living roadmap and architecture overview exist.
 - [x] Contribution and milestone check-in standards are documented.
 - [x] Initial architecture decision is recorded.
-- [ ] Solution builds from a clean restore.
+- [x] Solution builds from a clean restore.
 - [ ] Foundation is checked into Git and synchronized to GitHub.
 
 ## M1 — Provider selection policy
 
-Status: Planned
+Status: Approved
 
 Outcome: ProjectForge deterministically selects the best eligible provider and
 explains the decision.
 
 Acceptance criteria:
 
-- Provider metadata represents locality, execution features, and estimated cost.
-- Mandatory constraints eliminate ineligible providers.
-- Ranking applies explicit, testable policy after eligibility.
-- Health checks use one coherent abstraction with cancellation and timeouts.
-- Selection returns decision evidence, not only the chosen provider.
-- Unit tests cover local preference, cloud prohibition, cost limits, unhealthy
-  providers, ties, cancellation, and no-match behavior.
+- [x] Provider metadata represents locality, execution features, and estimated
+  cost.
+- [x] Mandatory constraints eliminate ineligible providers.
+- [x] Ranking applies explicit, testable policy after eligibility.
+- [x] Health checks use one coherent abstraction with cancellation and timeouts.
+- [x] Selection returns decision evidence, not only the chosen provider.
+- [x] Unit tests cover local preference, cloud prohibition, cost limits,
+  unhealthy providers, ties, cancellation, and no-match behavior.
 
 ## M2 — Durable approval workflow
 
-Status: Planned
+Status: Approved
 
 Outcome: A workflow can pause for approval, restart, and resume exactly once.
 
 Acceptance criteria:
 
-- An executable worker/API host composes the application.
-- Microsoft Agent Framework workflow behavior is validated in an isolated spike.
-- Workflow and approval state persist in SQLite.
-- A pending approval survives process termination.
-- Resumption is idempotent and produces an audit trail.
+- [x] An executable worker/API host composes the application.
+- [x] Microsoft Agent Framework workflow behavior is validated in an isolated
+  spike.
+- [x] Workflow and approval state persist in SQLite.
+- [x] A pending approval survives process termination.
+- [x] Resumption is idempotent and produces an audit trail.
 
 ## M3 — First real execution provider
 
-Status: Planned
+Status: In progress
 
 Outcome: An approved workflow executes through one local AI provider.
 
 Acceptance criteria:
 
-- Ollama and LiteLLM boundaries are evaluated separately.
-- Secrets and provider configuration remain outside source control.
-- Provider health, model availability, timeout, and failure modes are observable.
-- Execution produces structured JSON and human-readable Markdown artifacts.
+- [x] Ollama and LiteLLM boundaries are evaluated separately.
+- [x] Secrets and provider configuration remain outside source control.
+- [x] Provider health, model availability, timeout, and failure modes are
+  observable.
+- [ ] Execution through the real provider produces structured JSON and
+  human-readable Markdown artifacts.
+
+Decision: implement direct, loopback-only Ollama integration first. Retain
+LiteLLM as a later optional gateway because it adds a separate runtime and its
+execution locality depends on configured upstream routes.
 
 ## M4 — Coding provider
 
