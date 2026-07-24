@@ -29,10 +29,10 @@ public sealed class WorkflowExecutionServiceTests
             WorkflowExecutionOutcome.Succeeded,
             result.Current.Execution?.Outcome);
         Assert.Equal(
-            "C:\\artifacts\\result.md",
+            Path.GetFullPath(Path.Combine("artifacts", "result.md")),
             result.Current.Artifacts?.MarkdownPath);
         Assert.Equal(
-            "C:\\artifacts\\result.json",
+            Path.GetFullPath(Path.Combine("artifacts", "result.json")),
             result.Current.Artifacts?.JsonPath);
         Assert.Equal(
             "stub-provider",
@@ -520,8 +520,10 @@ public sealed class WorkflowExecutionServiceTests
         public ArtifactWriteResult Result { get; init; } =
             new()
             {
-                MarkdownPath = "C:\\artifacts\\result.md",
-                JsonPath = "C:\\artifacts\\result.json"
+                MarkdownPath =
+                    Path.GetFullPath(Path.Combine("artifacts", "result.md")),
+                JsonPath =
+                    Path.GetFullPath(Path.Combine("artifacts", "result.json"))
             };
 
         public int WriteCount => _writeCount;
