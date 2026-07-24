@@ -27,6 +27,9 @@ ProjectForge does not yet publish versioned releases.
   bombs, overwrites, and archives missing their pinned entrypoint.
 - Verified streaming artifact download with HTTPS redirect policy, exact size
   and SHA-256 checks, explicit attempt bounds, cancellation, and owned cleanup.
+- Durable explicit consent receipts bound to exact artifact and license hashes,
+  with idempotent recording, revocation, restart persistence, and mismatch
+  rejection.
 - Automated tests for provider policy and runtime-provisioning coordination.
 - Application workflow coordination that durably creates pending approvals and
   records optimistic human decisions through the workflow-store boundary.
