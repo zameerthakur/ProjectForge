@@ -17,6 +17,8 @@ ProjectForge does not yet publish versioned releases.
   lifecycle reporting, verification, concurrency control, and retry recovery.
 - Targeted runtime readiness by stable dependency ID with observable snapshots,
   shared operations, waiter isolation, and application-shutdown cancellation.
+- Provider-neutral trusted artifact manifests with strict validation for pinned
+  sources, integrity, platform, archive, entrypoint, license, and consent data.
 - Automated tests for provider policy and runtime-provisioning coordination.
 - Application workflow coordination that durably creates pending approvals and
   records optimistic human decisions through the workflow-store boundary.
