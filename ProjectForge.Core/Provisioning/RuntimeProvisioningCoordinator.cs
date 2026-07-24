@@ -9,17 +9,22 @@ namespace ProjectForge.Core.Provisioning;
 public sealed class RuntimeProvisioningCoordinator :
     IRuntimeProvisioningCoordinator
 {
-    private readonly IReadOnlyCollection<IRuntimeProvisioner> _provisioners;
+    private readonly Dictionary<string, IRuntimeProvisioner> _provisioners;
     private readonly ConcurrentDictionary<string, Lazy<Task>> _operations =
         new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ProvisioningSnapshot> _snapshots =
+        new(StringComparer.Ordinal);
+    private readonly CancellationToken _lifetimeCancellationToken;
 
     public RuntimeProvisioningCoordinator(
-        IEnumerable<IRuntimeProvisioner> provisioners)
+        IEnumerable<IRuntimeProvisioner> provisioners,
+        CancellationToken lifetimeCancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(provisioners);
-        _provisioners = provisioners.ToArray();
+        _lifetimeCancellationToken = lifetimeCancellationToken;
+        var registeredProvisioners = provisioners.ToArray();
 
-        var duplicate = _provisioners
+        var duplicate = registeredProvisioners
             .GroupBy(item => item.Requirement.Id, StringComparer.Ordinal)
             .FirstOrDefault(group => group.Count() > 1);
 
@@ -29,15 +34,48 @@ public sealed class RuntimeProvisioningCoordinator :
                 $"More than one provisioner is registered for '{duplicate.Key}'.",
                 nameof(provisioners));
         }
+
+        _provisioners = registeredProvisioners.ToDictionary(
+            item => item.Requirement.Id,
+            StringComparer.Ordinal);
     }
+
+    public IReadOnlyCollection<ProvisioningSnapshot> Snapshots =>
+        _snapshots.Values
+            .OrderBy(snapshot => snapshot.Requirement.Id, StringComparer.Ordinal)
+            .ToArray();
 
     public Task EnsureReadyAsync(
         IProgress<ProvisioningProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         return Task.WhenAll(
-            _provisioners.Select(
+            _provisioners.Values.Select(
                 item => EnsureReadyAsync(item, progress, cancellationToken)));
+    }
+
+    public Task EnsureRequirementReadyAsync(
+        string requirementId,
+        IProgress<ProvisioningProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requirementId);
+
+        if (!_provisioners.TryGetValue(requirementId, out var provisioner))
+        {
+            throw new KeyNotFoundException(
+                $"No runtime provisioner is registered for '{requirementId}'.");
+        }
+
+        return EnsureReadyAsync(provisioner, progress, cancellationToken);
+    }
+
+    public bool TryGetSnapshot(
+        string requirementId,
+        out ProvisioningSnapshot snapshot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requirementId);
+        return _snapshots.TryGetValue(requirementId, out snapshot!);
     }
 
     private async Task EnsureReadyAsync(
@@ -46,7 +84,6 @@ public sealed class RuntimeProvisioningCoordinator :
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Report(progress, provisioner, ProvisioningStatus.Checking);
 
         var operation = _operations.GetOrAdd(
             provisioner.Requirement.Id,
@@ -70,23 +107,26 @@ public sealed class RuntimeProvisioningCoordinator :
         await task.WaitAsync(cancellationToken);
     }
 
-    private static async Task EnsureProvisionedAsync(
+    private async Task EnsureProvisionedAsync(
         IRuntimeProvisioner provisioner,
         IProgress<ProvisioningProgress>? progress)
     {
         try
         {
-            if (await provisioner.IsReadyAsync())
+            Report(progress, provisioner, ProvisioningStatus.Checking);
+            if (await provisioner.IsReadyAsync(_lifetimeCancellationToken))
             {
                 Report(progress, provisioner, ProvisioningStatus.Ready);
                 return;
             }
 
             Report(progress, provisioner, ProvisioningStatus.Downloading);
-            await provisioner.ProvisionAsync(progress);
+            await provisioner.ProvisionAsync(
+                new SnapshotProgress(this, progress),
+                _lifetimeCancellationToken);
 
             Report(progress, provisioner, ProvisioningStatus.Verifying);
-            if (!await provisioner.IsReadyAsync())
+            if (!await provisioner.IsReadyAsync(_lifetimeCancellationToken))
             {
                 throw new InvalidOperationException(
                     $"Provisioning '{provisioner.Requirement.DisplayName}' " +
@@ -94,6 +134,16 @@ public sealed class RuntimeProvisioningCoordinator :
             }
 
             Report(progress, provisioner, ProvisioningStatus.Ready);
+        }
+        catch (OperationCanceledException)
+            when (_lifetimeCancellationToken.IsCancellationRequested)
+        {
+            Report(
+                progress,
+                provisioner,
+                ProvisioningStatus.Canceled,
+                "Provisioning was canceled because the coordinator is stopping.");
+            throw;
         }
         catch (Exception exception)
         {
@@ -106,18 +156,47 @@ public sealed class RuntimeProvisioningCoordinator :
         }
     }
 
-    private static void Report(
+    private void Report(
         IProgress<ProvisioningProgress>? progress,
         IRuntimeProvisioner provisioner,
         ProvisioningStatus status,
         string? message = null)
     {
-        progress?.Report(
-            new ProvisioningProgress
-            {
-                Requirement = provisioner.Requirement,
-                Status = status,
-                Message = message
-            });
+        var update = new ProvisioningProgress
+        {
+            Requirement = provisioner.Requirement,
+            Status = status,
+            Message = message
+        };
+        Capture(update, progress);
+    }
+
+    private void Capture(
+        ProvisioningProgress update,
+        IProgress<ProvisioningProgress>? progress)
+    {
+        var snapshotMessage = update.Status == ProvisioningStatus.Failed
+            ? "Provisioning failed."
+            : update.Message;
+        _snapshots[update.Requirement.Id] = new ProvisioningSnapshot
+        {
+            Requirement = update.Requirement,
+            Status = update.Status,
+            Percentage = update.Percentage,
+            Message = snapshotMessage
+        };
+        progress?.Report(update);
+    }
+
+    private sealed class SnapshotProgress(
+        RuntimeProvisioningCoordinator coordinator,
+        IProgress<ProvisioningProgress>? progress)
+        : IProgress<ProvisioningProgress>
+    {
+        public void Report(ProvisioningProgress value)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            coordinator.Capture(value, progress);
+        }
     }
 }

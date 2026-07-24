@@ -15,6 +15,8 @@ ProjectForge does not yet publish versioned releases.
   policy, cancellation, and bounded health checks.
 - Shared runtime-provisioning contracts and coordination boundaries with
   lifecycle reporting, verification, concurrency control, and retry recovery.
+- Targeted runtime readiness by stable dependency ID with observable snapshots,
+  shared operations, waiter isolation, and application-shutdown cancellation.
 - Automated tests for provider policy and runtime-provisioning coordination.
 - Application workflow coordination that durably creates pending approvals and
   records optimistic human decisions through the workflow-store boundary.

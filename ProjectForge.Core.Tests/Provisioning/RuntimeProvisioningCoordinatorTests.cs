@@ -168,6 +168,129 @@ public sealed class RuntimeProvisioningCoordinatorTests
         Assert.Contains("local-model", exception.Message);
     }
 
+    [Fact]
+    public async Task EnsuresOnlyTheRequestedRequirement()
+    {
+        var first = new FakeProvisioner("first");
+        var second = new FakeProvisioner("second");
+        var coordinator = Coordinator(first, second);
+
+        await coordinator.EnsureRequirementReadyAsync("second");
+
+        Assert.Equal(0, first.ProvisionCount);
+        Assert.Equal(1, second.ProvisionCount);
+        Assert.False(coordinator.TryGetSnapshot("first", out _));
+        Assert.True(coordinator.TryGetSnapshot("second", out var snapshot));
+        Assert.Equal(ProvisioningStatus.Ready, snapshot.Status);
+    }
+
+    [Fact]
+    public async Task RejectsUnknownRequirementIdentifier()
+    {
+        var coordinator = Coordinator(new FakeProvisioner());
+
+        var exception = await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => coordinator.EnsureRequirementReadyAsync("unknown"));
+
+        Assert.Contains("unknown", exception.Message);
+    }
+
+    [Fact]
+    public async Task ConcurrentTargetedRequestsShareOneOperation()
+    {
+        var provisioner = new FakeProvisioner(
+            id: "shared",
+            delay: TimeSpan.FromMilliseconds(50));
+        var coordinator = Coordinator(provisioner);
+
+        await Task.WhenAll(
+            coordinator.EnsureRequirementReadyAsync("shared"),
+            coordinator.EnsureRequirementReadyAsync("shared"));
+
+        Assert.Equal(1, provisioner.ProvisionCount);
+        Assert.Equal(
+            ProvisioningStatus.Ready,
+            Assert.Single(coordinator.Snapshots).Status);
+    }
+
+    [Fact]
+    public async Task TargetedFailureSnapshotIsReplacedAfterRetry()
+    {
+        var provisioner = new FakeProvisioner("retry", becomesReady: false);
+        var coordinator = Coordinator(provisioner);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => coordinator.EnsureRequirementReadyAsync("retry"));
+        Assert.True(coordinator.TryGetSnapshot("retry", out var failed));
+        Assert.Equal(ProvisioningStatus.Failed, failed.Status);
+
+        provisioner.BecomesReady = true;
+        await coordinator.EnsureRequirementReadyAsync("retry");
+
+        Assert.True(coordinator.TryGetSnapshot("retry", out var ready));
+        Assert.Equal(ProvisioningStatus.Ready, ready.Status);
+        Assert.Equal(2, provisioner.ProvisionCount);
+    }
+
+    [Fact]
+    public async Task CancelingTargetedWaiterPreservesSharedOperationAndState()
+    {
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var provisioner = new FakeProvisioner(
+            id: "cancel",
+            provisioningStarted: started,
+            allowProvisioning: release);
+        var coordinator = Coordinator(provisioner);
+        using var cancellation = new CancellationTokenSource();
+
+        var canceled = coordinator.EnsureRequirementReadyAsync(
+            "cancel",
+            cancellationToken: cancellation.Token);
+        await started.Task;
+        var active = coordinator.EnsureRequirementReadyAsync("cancel");
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceled);
+        Assert.True(coordinator.TryGetSnapshot("cancel", out var downloading));
+        Assert.Equal(ProvisioningStatus.Downloading, downloading.Status);
+
+        release.SetResult();
+        await active;
+
+        Assert.True(coordinator.TryGetSnapshot("cancel", out var ready));
+        Assert.Equal(ProvisioningStatus.Ready, ready.Status);
+        Assert.Equal(1, provisioner.ProvisionCount);
+    }
+
+    [Fact]
+    public async Task CoordinatorLifetimeCancellationStopsUnderlyingOperation()
+    {
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var neverRelease = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var provisioner = new FakeProvisioner(
+            id: "shutdown",
+            provisioningStarted: started,
+            allowProvisioning: neverRelease);
+        using var shutdown = new CancellationTokenSource();
+        var coordinator = new RuntimeProvisioningCoordinator(
+            [provisioner],
+            shutdown.Token);
+
+        var operation = coordinator.EnsureRequirementReadyAsync("shutdown");
+        await started.Task;
+        shutdown.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
+        Assert.True(coordinator.TryGetSnapshot("shutdown", out var canceled));
+        Assert.Equal(ProvisioningStatus.Canceled, canceled.Status);
+        Assert.Equal(1, provisioner.ProvisionCount);
+    }
+
     private static RuntimeProvisioningCoordinator Coordinator(
         params IRuntimeProvisioner[] provisioners) =>
         new(provisioners);
@@ -189,6 +312,7 @@ public sealed class RuntimeProvisioningCoordinatorTests
         private int _readinessCheckCount;
 
         public FakeProvisioner(
+            string id = "local-model",
             bool isReady = false,
             bool becomesReady = true,
             TimeSpan delay = default,
@@ -200,15 +324,16 @@ public sealed class RuntimeProvisioningCoordinatorTests
             _delay = delay;
             _provisioningStarted = provisioningStarted;
             _allowProvisioning = allowProvisioning;
+            Requirement = new ProvisioningRequirement
+            {
+                Id = id,
+                DisplayName = id,
+                Version = "1",
+                Kind = ProvisioningArtifactKind.Model
+            };
         }
 
-        public ProvisioningRequirement Requirement { get; } = new()
-        {
-            Id = "local-model",
-            DisplayName = "Local model",
-            Version = "1",
-            Kind = ProvisioningArtifactKind.Model
-        };
+        public ProvisioningRequirement Requirement { get; }
 
         public int ProvisionCount => _provisionCount;
 
